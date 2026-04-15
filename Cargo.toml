@@ -1,6 +1,6 @@
 [package]
 name = "mcp-google-ads"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "MCP server for Google Ads — full campaign management with safety guardrails"
 license = "MIT"
