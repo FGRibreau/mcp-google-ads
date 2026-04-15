@@ -1,0 +1,261 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 280" width="700" height="280">
+  <defs>
+    <!-- Gradients -->
+    <linearGradient id="claudeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="mcpGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34A853"/>
+      <stop offset="100%" stop-color="#2d9249"/>
+    </linearGradient>
+    <linearGradient id="adsGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4285F4"/>
+      <stop offset="100%" stop-color="#3367d6"/>
+    </linearGradient>
+    <linearGradient id="safetyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FBBC04"/>
+      <stop offset="100%" stop-color="#e8a900"/>
+    </linearGradient>
+
+    <!-- Animated flow: left to right (requests) -->
+    <linearGradient id="flowRight" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#a855f7" stop-opacity="0.1"/>
+      <stop offset="45%" stop-color="#a855f7" stop-opacity="0.1"/>
+      <stop offset="50%" stop-color="#a855f7" stop-opacity="1"/>
+      <stop offset="55%" stop-color="#a855f7" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#a855f7" stop-opacity="0.1"/>
+      <animateTransform attributeName="gradientTransform" type="translate" from="-1 0" to="1 0" dur="2.5s" repeatCount="indefinite"/>
+    </linearGradient>
+
+    <!-- Animated flow: right to left (responses) -->
+    <linearGradient id="flowLeft" x1="100%" y1="0%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#4285F4" stop-opacity="0.1"/>
+      <stop offset="45%" stop-color="#4285F4" stop-opacity="0.1"/>
+      <stop offset="50%" stop-color="#4285F4" stop-opacity="1"/>
+      <stop offset="55%" stop-color="#4285F4" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#4285F4" stop-opacity="0.1"/>
+      <animateTransform attributeName="gradientTransform" type="translate" from="1 0" to="-1 0" dur="2.5s" repeatCount="indefinite" begin="1.2s"/>
+    </linearGradient>
+
+    <!-- Animated flow: MCP to Ads -->
+    <linearGradient id="flowRightBlue" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#34A853" stop-opacity="0.1"/>
+      <stop offset="45%" stop-color="#34A853" stop-opacity="0.1"/>
+      <stop offset="50%" stop-color="#34A853" stop-opacity="1"/>
+      <stop offset="55%" stop-color="#34A853" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#34A853" stop-opacity="0.1"/>
+      <animateTransform attributeName="gradientTransform" type="translate" from="-1 0" to="1 0" dur="2s" repeatCount="indefinite" begin="0.5s"/>
+    </linearGradient>
+
+    <linearGradient id="flowLeftAds" x1="100%" y1="0%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#4285F4" stop-opacity="0.1"/>
+      <stop offset="45%" stop-color="#4285F4" stop-opacity="0.1"/>
+      <stop offset="50%" stop-color="#4285F4" stop-opacity="1"/>
+      <stop offset="55%" stop-color="#4285F4" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#4285F4" stop-opacity="0.1"/>
+      <animateTransform attributeName="gradientTransform" type="translate" from="1 0" to="-1 0" dur="2s" repeatCount="indefinite" begin="1.5s"/>
+    </linearGradient>
+
+    <!-- Shadow -->
+    <filter id="cardShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#64748b" flood-opacity="0.15"/>
+    </filter>
+  </defs>
+
+  <!-- ==================== CLAUDE CARD ==================== -->
+  <g transform="translate(20, 40)" filter="url(#cardShadow)">
+    <rect width="150" height="200" rx="16" fill="white"/>
+    <rect width="150" height="45" rx="16" fill="url(#claudeGrad)"/>
+    <rect y="33" width="150" height="12" fill="url(#claudeGrad)"/>
+
+    <!-- AI icon -->
+    <g transform="translate(57, 10)">
+      <circle cx="18" cy="14" r="12" fill="none" stroke="white" stroke-width="2"/>
+      <path d="M 14 11 Q 18 18 22 11" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="14" cy="10" r="1.5" fill="white"/>
+      <circle cx="22" cy="10" r="1.5" fill="white"/>
+    </g>
+
+    <text x="75" y="68" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="700" fill="#1e293b">Claude</text>
+    <text x="75" y="84" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">AI Assistant</text>
+
+    <!-- Capabilities -->
+    <g transform="translate(15, 100)">
+      <rect width="120" height="22" rx="11" fill="#a855f7" fill-opacity="0.08"/>
+      <text x="60" y="15" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" fill="#7c3aed">Natural language</text>
+    </g>
+    <g transform="translate(15, 128)">
+      <rect width="120" height="22" rx="11" fill="#a855f7" fill-opacity="0.08"/>
+      <text x="60" y="15" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" fill="#7c3aed">Campaign strategy</text>
+    </g>
+    <g transform="translate(15, 156)">
+      <rect width="120" height="22" rx="11" fill="#a855f7" fill-opacity="0.08"/>
+      <text x="60" y="15" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" fill="#7c3aed">Performance analysis</text>
+    </g>
+  </g>
+
+  <!-- ==================== ARROWS: Claude → MCP ==================== -->
+  <g>
+    <!-- Top arrow (request) -->
+    <path d="M 175 120 L 238 120" stroke="#e2e8f0" stroke-width="2" fill="none"/>
+    <path d="M 175 120 L 238 120" stroke="url(#flowRight)" stroke-width="3" fill="none"/>
+    <path d="M 233 115 L 243 120 L 233 125" fill="none" stroke="#a855f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="2.5s" repeatCount="indefinite"/>
+    </path>
+    <!-- Bottom arrow (response) -->
+    <path d="M 238 160 L 175 160" stroke="#e2e8f0" stroke-width="2" fill="none"/>
+    <path d="M 238 160 L 175 160" stroke="url(#flowLeft)" stroke-width="3" fill="none"/>
+    <path d="M 180 155 L 170 160 L 180 165" fill="none" stroke="#4285F4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="2.5s" repeatCount="indefinite" begin="1.2s"/>
+    </path>
+    <text x="206" y="145" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="7" fill="#94a3b8">MCP</text>
+
+    <!-- Particles Claude → MCP -->
+    <circle r="2.5" fill="#a855f7" opacity="0">
+      <animateMotion dur="2.5s" repeatCount="indefinite" path="M 175 120 L 238 120"/>
+      <animate attributeName="opacity" values="0;0.8;0.8;0" dur="2.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="2" fill="#a855f7" opacity="0">
+      <animateMotion dur="2.5s" repeatCount="indefinite" path="M 175 120 L 238 120" begin="0.8s"/>
+      <animate attributeName="opacity" values="0;0.6;0.6;0" dur="2.5s" repeatCount="indefinite" begin="0.8s"/>
+    </circle>
+  </g>
+
+  <!-- ==================== MCP SERVER CARD ==================== -->
+  <g transform="translate(245, 20)" filter="url(#cardShadow)">
+    <rect width="210" height="240" rx="16" fill="white"/>
+    <rect width="210" height="45" rx="16" fill="url(#mcpGrad)"/>
+    <rect y="33" width="210" height="12" fill="url(#mcpGrad)"/>
+
+    <!-- Shield icon -->
+    <g transform="translate(87, 8)">
+      <path d="M 18 4 L 6 10 L 6 18 Q 6 26 18 30 Q 30 26 30 18 L 30 10 Z" fill="none" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M 13 17 L 17 21 L 24 13" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <text x="105" y="68" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="700" fill="#1e293b">mcp-google-ads</text>
+    <text x="105" y="84" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">Safety-first MCP server</text>
+
+    <!-- Read tools pill -->
+    <g transform="translate(15, 98)">
+      <rect width="85" height="22" rx="11" fill="#4285F4" fill-opacity="0.08"/>
+      <text x="42" y="15" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" fill="#3367d6">11 read tools</text>
+    </g>
+    <!-- Write tools pill -->
+    <g transform="translate(110, 98)">
+      <rect width="85" height="22" rx="11" fill="#34A853" fill-opacity="0.08"/>
+      <text x="42" y="15" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" fill="#2d9249">22 write tools</text>
+    </g>
+
+    <!-- Safety flow box -->
+    <g transform="translate(15, 130)">
+      <rect width="180" height="95" rx="10" fill="#FBBC04" fill-opacity="0.06" stroke="#FBBC04" stroke-opacity="0.2" stroke-width="1"/>
+      <text x="90" y="16" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" font-weight="600" fill="#e8a900" letter-spacing="1">SAFETY LAYER</text>
+
+      <!-- Step 1: Draft -->
+      <g transform="translate(8, 26)">
+        <rect width="48" height="28" rx="6" fill="#34A853" fill-opacity="0.1"/>
+        <text x="24" y="13" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="8" font-weight="600" fill="#2d9249">Draft</text>
+        <text x="24" y="23" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="7" fill="#64748b">preview</text>
+      </g>
+      <!-- Arrow 1 -->
+      <path d="M 60 40 L 72 40" stroke="#94a3b8" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+      <path d="M 69 37 L 74 40 L 69 43" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <animate attributeName="opacity" values="0.4;1;0.4" dur="3s" repeatCount="indefinite"/>
+      </path>
+
+      <!-- Step 2: Review -->
+      <g transform="translate(76, 26)">
+        <rect width="48" height="28" rx="6" fill="#FBBC04" fill-opacity="0.15"/>
+        <text x="24" y="13" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="8" font-weight="600" fill="#d97706">Review</text>
+        <text x="24" y="23" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="7" fill="#64748b">validate</text>
+      </g>
+      <!-- Arrow 2 -->
+      <path d="M 128 40 L 140 40" stroke="#94a3b8" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+      <path d="M 137 37 L 142 40 L 137 43" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <animate attributeName="opacity" values="0.4;1;0.4" dur="3s" repeatCount="indefinite" begin="1s"/>
+      </path>
+
+      <!-- Step 3: Confirm -->
+      <g transform="translate(144, 26)">
+        <rect width="28" height="28" rx="6" fill="#34A853" fill-opacity="0.15"/>
+        <path d="M 152 37 L 156 42 L 166 34" fill="none" stroke="#34A853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(-144, -26)">
+          <animate attributeName="opacity" values="0.4;1;0.4" dur="3s" repeatCount="indefinite" begin="2s"/>
+        </path>
+      </g>
+
+      <!-- Guard pills row -->
+      <g transform="translate(8, 62)">
+        <rect width="50" height="16" rx="8" fill="#FBBC04" fill-opacity="0.12"/>
+        <text x="25" y="11" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="7" fill="#d97706">budget cap</text>
+      </g>
+      <g transform="translate(63, 62)">
+        <rect width="48" height="16" rx="8" fill="#FBBC04" fill-opacity="0.12"/>
+        <text x="24" y="11" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="7" fill="#d97706">bid limit</text>
+      </g>
+      <g transform="translate(116, 62)">
+        <rect width="52" height="16" rx="8" fill="#FBBC04" fill-opacity="0.12"/>
+        <text x="26" y="11" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="7" fill="#d97706">audit log</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ==================== ARROWS: MCP → Google Ads ==================== -->
+  <g>
+    <!-- Top arrow (request) -->
+    <path d="M 460 120 L 523 120" stroke="#e2e8f0" stroke-width="2" fill="none"/>
+    <path d="M 460 120 L 523 120" stroke="url(#flowRightBlue)" stroke-width="3" fill="none"/>
+    <path d="M 518 115 L 528 120 L 518 125" fill="none" stroke="#34A853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" repeatCount="indefinite" begin="0.5s"/>
+    </path>
+    <!-- Bottom arrow (response) -->
+    <path d="M 523 160 L 460 160" stroke="#e2e8f0" stroke-width="2" fill="none"/>
+    <path d="M 523 160 L 460 160" stroke="url(#flowLeftAds)" stroke-width="3" fill="none"/>
+    <path d="M 465 155 L 455 160 L 465 165" fill="none" stroke="#4285F4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" repeatCount="indefinite" begin="1.5s"/>
+    </path>
+    <text x="491" y="145" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="7" fill="#94a3b8">REST v23</text>
+
+    <!-- Particles MCP → Ads -->
+    <circle r="2.5" fill="#34A853" opacity="0">
+      <animateMotion dur="2s" repeatCount="indefinite" path="M 460 120 L 523 120" begin="0.5s"/>
+      <animate attributeName="opacity" values="0;0.8;0.8;0" dur="2s" repeatCount="indefinite" begin="0.5s"/>
+    </circle>
+    <circle r="2" fill="#4285F4" opacity="0">
+      <animateMotion dur="2s" repeatCount="indefinite" path="M 523 160 L 460 160" begin="1.5s"/>
+      <animate attributeName="opacity" values="0;0.7;0.7;0" dur="2s" repeatCount="indefinite" begin="1.5s"/>
+    </circle>
+  </g>
+
+  <!-- ==================== GOOGLE ADS CARD ==================== -->
+  <g transform="translate(530, 40)" filter="url(#cardShadow)">
+    <rect width="150" height="200" rx="16" fill="white"/>
+    <rect width="150" height="45" rx="16" fill="url(#adsGrad)"/>
+    <rect y="33" width="150" height="12" fill="url(#adsGrad)"/>
+
+    <!-- Ads icon (chart) -->
+    <g transform="translate(57, 9)">
+      <rect x="4" y="16" width="6" height="10" rx="2" fill="white" fill-opacity="0.7"/>
+      <rect x="14" y="10" width="6" height="16" rx="2" fill="white" fill-opacity="0.85"/>
+      <rect x="24" y="4" width="6" height="22" rx="2" fill="white"/>
+    </g>
+
+    <text x="75" y="68" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="700" fill="#1e293b">Google Ads</text>
+    <text x="75" y="84" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">REST API v23</text>
+
+    <!-- Features -->
+    <g transform="translate(15, 100)">
+      <rect width="120" height="22" rx="11" fill="#4285F4" fill-opacity="0.08"/>
+      <text x="60" y="15" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" fill="#3367d6">Campaigns</text>
+    </g>
+    <g transform="translate(15, 128)">
+      <rect width="120" height="22" rx="11" fill="#4285F4" fill-opacity="0.08"/>
+      <text x="60" y="15" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" fill="#3367d6">Keywords &amp; Ads</text>
+    </g>
+    <g transform="translate(15, 156)">
+      <rect width="120" height="22" rx="11" fill="#4285F4" fill-opacity="0.08"/>
+      <text x="60" y="15" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="9" fill="#3367d6">PMax &amp; Audiences</text>
+    </g>
+  </g>
+</svg>

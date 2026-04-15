@@ -1,0 +1,6 @@
+/target
+credentials.json
+.env
+.envrc
+.claude
+dogfood-output/

@@ -1,0 +1,403 @@
+// =============================================================================
+// WRITE TOOL METHODS — paste these into the #[rmcp::tool_router] impl block
+// in lib.rs alongside the existing health_check tool and any READ tools.
+//
+// Required imports at the top of lib.rs:
+//   use tools::campaigns_write;
+//   use tools::ads_write;
+//   use tools::keywords_write;
+//   use tools::extensions_write;
+//   use tools::entity_lifecycle;
+//   use tools::confirm;
+// =============================================================================
+
+    /// Draft a new Google Ads campaign with budget, ad group, and optional keywords.
+    /// All entities are created in PAUSED status. Returns a change plan preview
+    /// that must be confirmed via confirm_and_apply.
+    #[tool(description = "Draft a new campaign (PAUSED) with budget, ad group, and optional keywords. Returns a plan to confirm.")]
+    fn draft_campaign(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Google Ads customer ID (e.g. '123-456-7890')")]
+        customer_id: String,
+        #[tool(param)]
+        #[schemars(description = "Campaign name")]
+        campaign_name: String,
+        #[tool(param)]
+        #[schemars(description = "Daily budget in dollars (e.g. 50.0)")]
+        daily_budget: f64,
+        #[tool(param)]
+        #[schemars(description = "Bidding strategy: MAXIMIZE_CONVERSIONS, MAXIMIZE_CONVERSION_VALUE, TARGET_CPA, TARGET_ROAS, MANUAL_CPC")]
+        bidding_strategy: String,
+        #[tool(param)]
+        #[schemars(description = "Target CPA in dollars (optional, for TARGET_CPA or MAXIMIZE_CONVERSIONS)")]
+        target_cpa: Option<f64>,
+        #[tool(param)]
+        #[schemars(description = "Target ROAS ratio (optional, for TARGET_ROAS or MAXIMIZE_CONVERSION_VALUE)")]
+        target_roas: Option<f64>,
+        #[tool(param)]
+        #[schemars(description = "Advertising channel type: SEARCH, DISPLAY, SHOPPING, VIDEO")]
+        channel_type: String,
+        #[tool(param)]
+        #[schemars(description = "Ad group name")]
+        ad_group_name: String,
+        #[tool(param)]
+        #[schemars(description = "Optional keywords as JSON array of {\"text\": \"...\", \"match_type\": \"EXACT|PHRASE|BROAD\"}")]
+        keywords_json: Option<String>,
+        #[tool(param)]
+        #[schemars(description = "Geo target constant IDs (e.g. [\"2840\"] for US)")]
+        geo_target_ids: Option<Vec<String>>,
+        #[tool(param)]
+        #[schemars(description = "Language constant IDs (e.g. [\"1000\"] for English)")]
+        language_ids: Option<Vec<String>>,
+    ) -> String {
+        let keywords: Vec<campaigns_write::KeywordInput> = keywords_json
+            .map(|json_str| {
+                serde_json::from_str::<Vec<serde_json::Value>>(&json_str)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|v| {
+                        let text = v.get("text")?.as_str()?.to_string();
+                        let match_type = v.get("match_type")?.as_str()?.to_string();
+                        Some(campaigns_write::KeywordInput { text, match_type })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        match campaigns_write::draft_campaign(
+            &self.config,
+            &customer_id,
+            &campaign_name,
+            daily_budget,
+            &bidding_strategy,
+            target_cpa,
+            target_roas,
+            &channel_type,
+            &ad_group_name,
+            keywords,
+            geo_target_ids.unwrap_or_default(),
+            language_ids.unwrap_or_default(),
+        ) {
+            Ok(preview) => serde_json::to_string_pretty(&preview).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
+
+    /// Update an existing campaign's settings (budget, bidding, geo targets, languages).
+    #[tool(description = "Update a campaign's budget, bidding strategy, geo targets, or languages. Returns a plan to confirm.")]
+    fn update_campaign(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Google Ads customer ID")]
+        customer_id: String,
+        #[tool(param)]
+        #[schemars(description = "Campaign ID to update")]
+        campaign_id: String,
+        #[tool(param)]
+        #[schemars(description = "New bidding strategy (optional)")]
+        bidding_strategy: Option<String>,
+        #[tool(param)]
+        #[schemars(description = "New target CPA in dollars (optional)")]
+        target_cpa: Option<f64>,
+        #[tool(param)]
+        #[schemars(description = "New target ROAS ratio (optional)")]
+        target_roas: Option<f64>,
+        #[tool(param)]
+        #[schemars(description = "New daily budget in dollars (optional)")]
+        daily_budget: Option<f64>,
+        #[tool(param)]
+        #[schemars(description = "Geo target constant IDs to add (optional)")]
+        geo_target_ids: Option<Vec<String>>,
+        #[tool(param)]
+        #[schemars(description = "Language constant IDs to add (optional)")]
+        language_ids: Option<Vec<String>>,
+    ) -> String {
+        match campaigns_write::update_campaign(
+            &self.config,
+            &customer_id,
+            &campaign_id,
+            bidding_strategy.as_deref(),
+            target_cpa,
+            target_roas,
+            daily_budget,
+            geo_target_ids.unwrap_or_default(),
+            language_ids.unwrap_or_default(),
+        ) {
+            Ok(preview) => serde_json::to_string_pretty(&preview).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
+
+    /// Draft a Responsive Search Ad (RSA) with headlines and descriptions.
+    #[tool(description = "Draft a Responsive Search Ad (3-15 headlines, 2-4 descriptions). Returns a plan to confirm.")]
+    fn draft_responsive_search_ad(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Google Ads customer ID")]
+        customer_id: String,
+        #[tool(param)]
+        #[schemars(description = "Ad group ID to create the ad in")]
+        ad_group_id: String,
+        #[tool(param)]
+        #[schemars(description = "3-15 headlines (max 30 chars each)")]
+        headlines: Vec<String>,
+        #[tool(param)]
+        #[schemars(description = "2-4 descriptions (max 90 chars each)")]
+        descriptions: Vec<String>,
+        #[tool(param)]
+        #[schemars(description = "Final URL (landing page)")]
+        final_url: String,
+        #[tool(param)]
+        #[schemars(description = "Display URL path 1 (optional, max 15 chars)")]
+        path1: Option<String>,
+        #[tool(param)]
+        #[schemars(description = "Display URL path 2 (optional, max 15 chars)")]
+        path2: Option<String>,
+    ) -> String {
+        match ads_write::draft_responsive_search_ad(
+            &self.config,
+            &customer_id,
+            &ad_group_id,
+            headlines,
+            descriptions,
+            &final_url,
+            path1.as_deref(),
+            path2.as_deref(),
+        ) {
+            Ok(preview) => serde_json::to_string_pretty(&preview).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
+
+    /// Draft keywords to add to an ad group.
+    #[tool(description = "Draft keywords for an ad group with match types (EXACT, PHRASE, BROAD). Returns a plan to confirm.")]
+    fn draft_keywords(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Google Ads customer ID")]
+        customer_id: String,
+        #[tool(param)]
+        #[schemars(description = "Ad group ID to add keywords to")]
+        ad_group_id: String,
+        #[tool(param)]
+        #[schemars(description = "Keywords as JSON array of {\"text\": \"...\", \"match_type\": \"EXACT|PHRASE|BROAD\"}")]
+        keywords_json: String,
+    ) -> String {
+        let keywords: Vec<keywords_write::KeywordWithMatchType> =
+            serde_json::from_str::<Vec<serde_json::Value>>(&keywords_json)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|v| {
+                    let text = v.get("text")?.as_str()?.to_string();
+                    let match_type = v.get("match_type")?.as_str()?.to_string();
+                    Some(keywords_write::KeywordWithMatchType { text, match_type })
+                })
+                .collect();
+
+        match keywords_write::draft_keywords(&self.config, &customer_id, &ad_group_id, keywords) {
+            Ok(preview) => serde_json::to_string_pretty(&preview).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
+
+    /// Add negative keywords to a campaign.
+    #[tool(description = "Add negative keywords to a campaign to exclude search terms. Returns a plan to confirm.")]
+    fn add_negative_keywords(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Google Ads customer ID")]
+        customer_id: String,
+        #[tool(param)]
+        #[schemars(description = "Campaign ID")]
+        campaign_id: String,
+        #[tool(param)]
+        #[schemars(description = "Keywords to negate")]
+        keywords: Vec<String>,
+        #[tool(param)]
+        #[schemars(description = "Match type: EXACT, PHRASE, or BROAD")]
+        match_type: String,
+    ) -> String {
+        match keywords_write::add_negative_keywords(
+            &self.config,
+            &customer_id,
+            &campaign_id,
+            keywords,
+            &match_type,
+        ) {
+            Ok(preview) => serde_json::to_string_pretty(&preview).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
+
+    /// Draft sitelink extensions for a campaign.
+    #[tool(description = "Draft sitelink extensions for a campaign. Returns a plan to confirm.")]
+    fn draft_sitelinks(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Google Ads customer ID")]
+        customer_id: String,
+        #[tool(param)]
+        #[schemars(description = "Campaign ID")]
+        campaign_id: String,
+        #[tool(param)]
+        #[schemars(description = "Sitelinks as JSON array of {\"link_text\": \"...\", \"final_url\": \"...\", \"description1\": \"...\", \"description2\": \"...\"}")]
+        sitelinks_json: String,
+    ) -> String {
+        let sitelinks: Vec<extensions_write::SitelinkInput> =
+            serde_json::from_str::<Vec<serde_json::Value>>(&sitelinks_json)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|v| {
+                    Some(extensions_write::SitelinkInput {
+                        link_text: v.get("link_text")?.as_str()?.to_string(),
+                        final_url: v.get("final_url")?.as_str()?.to_string(),
+                        description1: v.get("description1")?.as_str()?.to_string(),
+                        description2: v.get("description2")?.as_str()?.to_string(),
+                    })
+                })
+                .collect();
+
+        match extensions_write::draft_sitelinks(&self.config, &customer_id, &campaign_id, sitelinks)
+        {
+            Ok(preview) => serde_json::to_string_pretty(&preview).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
+
+    /// Create callout extensions for a campaign.
+    #[tool(description = "Create callout extensions for a campaign (max 25 chars each). Returns a plan to confirm.")]
+    fn create_callouts(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Google Ads customer ID")]
+        customer_id: String,
+        #[tool(param)]
+        #[schemars(description = "Campaign ID")]
+        campaign_id: String,
+        #[tool(param)]
+        #[schemars(description = "Callout texts (max 25 chars each)")]
+        callouts: Vec<String>,
+    ) -> String {
+        match extensions_write::create_callouts(&self.config, &customer_id, &campaign_id, callouts)
+        {
+            Ok(preview) => serde_json::to_string_pretty(&preview).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
+
+    /// Create structured snippet extensions for a campaign.
+    #[tool(description = "Create structured snippet extensions (e.g., Brands, Types, Destinations). Returns a plan to confirm.")]
+    fn create_structured_snippets(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Google Ads customer ID")]
+        customer_id: String,
+        #[tool(param)]
+        #[schemars(description = "Campaign ID")]
+        campaign_id: String,
+        #[tool(param)]
+        #[schemars(description = "Header type: Amenities, Brands, Courses, Degree programs, Destinations, Featured hotels, Insurance coverage, Models, Neighborhoods, Service catalog, Shows, Styles, Types")]
+        header: String,
+        #[tool(param)]
+        #[schemars(description = "Values for the structured snippet")]
+        values: Vec<String>,
+    ) -> String {
+        match extensions_write::create_structured_snippets(
+            &self.config,
+            &customer_id,
+            &campaign_id,
+            &header,
+            values,
+        ) {
+            Ok(preview) => serde_json::to_string_pretty(&preview).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
+
+    /// Pause a campaign, ad group, ad, or keyword.
+    #[tool(description = "Pause an entity (campaign, ad_group, ad, keyword). Returns a plan to confirm.")]
+    fn pause_entity(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Google Ads customer ID")]
+        customer_id: String,
+        #[tool(param)]
+        #[schemars(description = "Entity type: campaign, ad_group, ad, keyword")]
+        entity_type: String,
+        #[tool(param)]
+        #[schemars(description = "Entity ID")]
+        entity_id: String,
+    ) -> String {
+        match entity_lifecycle::pause_entity(&self.config, &customer_id, &entity_type, &entity_id) {
+            Ok(preview) => serde_json::to_string_pretty(&preview).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
+
+    /// Enable a campaign, ad group, ad, or keyword.
+    #[tool(description = "Enable an entity (campaign, ad_group, ad, keyword). Returns a plan to confirm.")]
+    fn enable_entity(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Google Ads customer ID")]
+        customer_id: String,
+        #[tool(param)]
+        #[schemars(description = "Entity type: campaign, ad_group, ad, keyword")]
+        entity_type: String,
+        #[tool(param)]
+        #[schemars(description = "Entity ID")]
+        entity_id: String,
+    ) -> String {
+        match entity_lifecycle::enable_entity(
+            &self.config,
+            &customer_id,
+            &entity_type,
+            &entity_id,
+        ) {
+            Ok(preview) => serde_json::to_string_pretty(&preview).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
+
+    /// Remove (delete) a campaign, ad group, ad, or keyword. Requires double confirmation.
+    #[tool(description = "Remove an entity (DESTRUCTIVE — requires double confirmation). Returns a plan to confirm.")]
+    fn remove_entity(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Google Ads customer ID")]
+        customer_id: String,
+        #[tool(param)]
+        #[schemars(description = "Entity type: campaign, ad_group, ad, keyword")]
+        entity_type: String,
+        #[tool(param)]
+        #[schemars(description = "Entity ID")]
+        entity_id: String,
+    ) -> String {
+        match entity_lifecycle::remove_entity(
+            &self.config,
+            &customer_id,
+            &entity_type,
+            &entity_id,
+        ) {
+            Ok(preview) => serde_json::to_string_pretty(&preview).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
+
+    /// Confirm and apply a previously drafted change plan.
+    #[tool(description = "Confirm and apply a change plan. Use dry_run=true to preview without executing.")]
+    async fn confirm_and_apply(
+        &self,
+        #[tool(param)]
+        #[schemars(description = "Plan ID returned by a draft/write tool")]
+        plan_id: String,
+        #[tool(param)]
+        #[schemars(description = "If true, preview only without executing mutations")]
+        dry_run: bool,
+    ) -> String {
+        match confirm::confirm_and_apply(&self.config, &plan_id, dry_run).await {
+            Ok(result) => serde_json::to_string_pretty(&result).unwrap_or_default(),
+            Err(e) => serde_json::to_string_pretty(&serde_json::json!({"error": e.to_string()})).unwrap_or_default(),
+        }
+    }
