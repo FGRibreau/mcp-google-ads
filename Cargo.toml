@@ -5,7 +5,12 @@ edition = "2021"
 description = "MCP server for Google Ads — full campaign management with safety guardrails"
 license = "MIT"
 authors = ["François-Guillaume Ribreau <rust@fgribreau.com>"]
-repository = "https://gitlab.com/fgribreau/mcp-google-ads"
+repository = "https://github.com/FGRibreau/mcp-google-ads"
+homepage = "https://github.com/FGRibreau/mcp-google-ads"
+readme = "README.md"
+keywords = ["mcp", "google-ads", "advertising", "ai", "automation"]
+categories = ["command-line-utilities", "web-programming"]
+exclude = ["dogfood-output/", "scripts/", "assets/", ".claude/", ".envrc"]
 
 [dependencies]
 rmcp = { version = "0.16", features = ["server", "transport-io", "macros"] }
