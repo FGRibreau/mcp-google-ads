@@ -11,6 +11,7 @@
 <br/>
 <br/>
 
+[![Crates.io](https://img.shields.io/crates/v/mcp-google-ads.svg)](https://crates.io/crates/mcp-google-ads)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://rust-lang.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-green.svg)](https://modelcontextprotocol.io)
