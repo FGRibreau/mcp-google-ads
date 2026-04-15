@@ -23,3 +23,31 @@ pub async fn list_accounts(client: &GoogleAdsClient, customer_id: &str) -> Resul
 
     serde_json::to_string_pretty(&result).map_err(Into::into)
 }
+
+/// Get detailed information about a specific Google Ads account.
+///
+/// Returns account metadata including currency, timezone, tagging settings,
+/// manager status, and account status.
+pub async fn get_account_info(client: &GoogleAdsClient, customer_id: &str) -> Result<String> {
+    let query = "\
+        SELECT \
+            customer.id, \
+            customer.descriptive_name, \
+            customer.currency_code, \
+            customer.time_zone, \
+            customer.auto_tagging_enabled, \
+            customer.manager, \
+            customer.status \
+        FROM customer \
+        LIMIT 1";
+
+    let rows = client.search(customer_id, query).await?;
+
+    let account = rows.first().cloned();
+
+    let result = serde_json::json!({
+        "account": account,
+    });
+
+    serde_json::to_string_pretty(&result).map_err(Into::into)
+}

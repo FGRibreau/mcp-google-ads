@@ -159,6 +159,108 @@ pub fn add_negative_keywords(
     Ok(preview)
 }
 
+/// Remove keywords from an ad group by criterion IDs.
+///
+/// This is a destructive operation and requires double confirmation.
+pub fn remove_keywords(
+    config: &Config,
+    customer_id: &str,
+    ad_group_id: &str,
+    criterion_ids: Vec<String>,
+) -> Result<serde_json::Value> {
+    check_blocked_operation("remove_keywords", &config.safety)?;
+
+    if criterion_ids.is_empty() {
+        return Err(McpGoogleAdsError::Validation(
+            "At least one criterion ID is required".to_string(),
+        ));
+    }
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+
+    let operations: Vec<serde_json::Value> = criterion_ids
+        .iter()
+        .map(|criterion_id| {
+            json!({
+                "adGroupCriterionOperation": {
+                    "remove": format!("customers/{}/adGroupCriteria/{}~{}", cid, ad_group_id, criterion_id)
+                }
+            })
+        })
+        .collect();
+
+    let changes = json!({
+        "ad_group_id": ad_group_id,
+        "criterion_ids": criterion_ids,
+        "warning": "This action is destructive and cannot be undone"
+    });
+
+    let plan = ChangePlan::new(
+        "remove_keywords".to_string(),
+        "ad_group_criterion".to_string(),
+        ad_group_id.to_string(),
+        cid,
+        changes,
+        true,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
+/// Remove negative keywords from a campaign by criterion IDs.
+///
+/// This is a destructive operation and requires double confirmation.
+pub fn remove_negative_keywords(
+    config: &Config,
+    customer_id: &str,
+    campaign_id: &str,
+    criterion_ids: Vec<String>,
+) -> Result<serde_json::Value> {
+    check_blocked_operation("remove_negative_keywords", &config.safety)?;
+
+    if criterion_ids.is_empty() {
+        return Err(McpGoogleAdsError::Validation(
+            "At least one criterion ID is required".to_string(),
+        ));
+    }
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+
+    let operations: Vec<serde_json::Value> = criterion_ids
+        .iter()
+        .map(|criterion_id| {
+            json!({
+                "campaignCriterionOperation": {
+                    "remove": format!("customers/{}/campaignCriteria/{}~{}", cid, campaign_id, criterion_id)
+                }
+            })
+        })
+        .collect();
+
+    let changes = json!({
+        "campaign_id": campaign_id,
+        "criterion_ids": criterion_ids,
+        "warning": "This action is destructive and cannot be undone"
+    });
+
+    let plan = ChangePlan::new(
+        "remove_negative_keywords".to_string(),
+        "campaign_criterion".to_string(),
+        campaign_id.to_string(),
+        cid,
+        changes,
+        true,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,6 +380,86 @@ mod tests {
             "222",
             vec!["free".to_string()],
             "EXACT",
+        );
+        assert!(result.is_err());
+        let err = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("blocked"));
+    }
+
+    #[test]
+    fn test_remove_keywords_empty() {
+        let config = Config::default();
+        let result = remove_keywords(&config, "123-456-7890", "111", vec![]);
+        assert!(result.is_err());
+        let err = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("At least one criterion ID"));
+    }
+
+    #[test]
+    fn test_remove_keywords_success() {
+        let config = Config::default();
+        let result = remove_keywords(
+            &config,
+            "123-456-7890",
+            "111",
+            vec!["555".to_string(), "666".to_string()],
+        );
+        assert!(result.is_ok());
+        let preview = result.ok().unwrap_or_default();
+        assert_eq!(preview["operation"], "remove_keywords");
+        assert_eq!(preview["requires_double_confirm"], true);
+        assert_eq!(preview["changes"]["ad_group_id"], "111");
+    }
+
+    #[test]
+    fn test_remove_keywords_blocked() {
+        let mut config = Config::default();
+        config.safety.blocked_operations = vec!["remove_keywords".to_string()];
+        let result = remove_keywords(
+            &config,
+            "123-456-7890",
+            "111",
+            vec!["555".to_string()],
+        );
+        assert!(result.is_err());
+        let err = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("blocked"));
+    }
+
+    #[test]
+    fn test_remove_negative_keywords_empty() {
+        let config = Config::default();
+        let result = remove_negative_keywords(&config, "123-456-7890", "222", vec![]);
+        assert!(result.is_err());
+        let err = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("At least one criterion ID"));
+    }
+
+    #[test]
+    fn test_remove_negative_keywords_success() {
+        let config = Config::default();
+        let result = remove_negative_keywords(
+            &config,
+            "123-456-7890",
+            "222",
+            vec!["777".to_string(), "888".to_string()],
+        );
+        assert!(result.is_ok());
+        let preview = result.ok().unwrap_or_default();
+        assert_eq!(preview["operation"], "remove_negative_keywords");
+        assert_eq!(preview["requires_double_confirm"], true);
+        assert_eq!(preview["changes"]["campaign_id"], "222");
+    }
+
+    #[test]
+    fn test_remove_negative_keywords_blocked() {
+        let mut config = Config::default();
+        config.safety.blocked_operations = vec!["remove_negative_keywords".to_string()];
+        let result = remove_negative_keywords(
+            &config,
+            "123-456-7890",
+            "222",
+            vec!["777".to_string()],
         );
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();

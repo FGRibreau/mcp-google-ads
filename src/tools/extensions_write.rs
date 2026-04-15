@@ -291,6 +291,52 @@ pub fn create_structured_snippets(
     Ok(preview)
 }
 
+/// Remove a campaign asset (extension) by campaign ID, asset ID, and field type.
+///
+/// This is a destructive operation and requires double confirmation.
+pub fn remove_extension(
+    config: &Config,
+    customer_id: &str,
+    campaign_id: &str,
+    asset_id: &str,
+    field_type: &str,
+) -> Result<serde_json::Value> {
+    check_blocked_operation("remove_extension", &config.safety)?;
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let resource_name = format!(
+        "customers/{}/campaignAssets/{}~{}~{}",
+        cid, campaign_id, asset_id, field_type
+    );
+
+    let operations = vec![json!({
+        "campaignAssetOperation": {
+            "remove": resource_name
+        }
+    })];
+
+    let changes = json!({
+        "campaign_id": campaign_id,
+        "asset_id": asset_id,
+        "field_type": field_type,
+        "warning": "This action is destructive and cannot be undone"
+    });
+
+    let plan = ChangePlan::new(
+        "remove_extension".to_string(),
+        "campaign_asset".to_string(),
+        format!("{}~{}", campaign_id, asset_id),
+        cid,
+        changes,
+        true,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,6 +546,29 @@ mod tests {
             "Brands",
             vec!["Nike".to_string()],
         );
+        assert!(result.is_err());
+        let err = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("blocked"));
+    }
+
+    #[test]
+    fn test_remove_extension_success() {
+        let config = Config::default();
+        let result = remove_extension(&config, "123-456-7890", "555", "999", "SITELINK");
+        assert!(result.is_ok());
+        let preview = result.ok().unwrap_or_default();
+        assert_eq!(preview["operation"], "remove_extension");
+        assert_eq!(preview["requires_double_confirm"], true);
+        assert_eq!(preview["changes"]["campaign_id"], "555");
+        assert_eq!(preview["changes"]["asset_id"], "999");
+        assert_eq!(preview["changes"]["field_type"], "SITELINK");
+    }
+
+    #[test]
+    fn test_remove_extension_blocked() {
+        let mut config = Config::default();
+        config.safety.blocked_operations = vec!["remove_extension".to_string()];
+        let result = remove_extension(&config, "123-456-7890", "555", "999", "SITELINK");
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("blocked"));

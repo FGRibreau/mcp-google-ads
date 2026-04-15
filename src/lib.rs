@@ -209,6 +209,50 @@ pub struct ConfirmApplyParams {
     pub dry_run: Option<bool>,
 }
 
+/// Parameters for creating a new ad group.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct CreateAdGroupToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Campaign ID to create the ad group in.
+    pub campaign_id: String,
+    /// Name for the new ad group.
+    pub ad_group_name: String,
+    /// Optional CPC bid in micros (1 dollar = 1_000_000 micros).
+    pub cpc_bid_micros: Option<i64>,
+}
+
+/// Parameters for updating an ad group.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct UpdateAdGroupToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The ad group ID to update.
+    pub ad_group_id: String,
+    /// New name for the ad group.
+    pub name: Option<String>,
+    /// New CPC bid in micros.
+    pub cpc_bid_micros: Option<i64>,
+}
+
+/// Parameters for keyword discovery.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct DiscoverKeywordsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Seed keywords to generate ideas from.
+    pub seed_keywords: Vec<String>,
+}
+
+/// Parameters for keyword forecasts.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct KeywordForecastsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Keywords to get forecasts for.
+    pub keyword_texts: Vec<String>,
+}
+
 // ── Phase 5 parameter structs ────────────────────────────────────────
 
 /// Parameters for creating a Performance Max campaign.
@@ -336,6 +380,41 @@ pub struct RecommendationActionToolParams {
     pub recommendation_id: String,
 }
 
+/// Parameters for removing a campaign asset (extension).
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RemoveExtensionToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID the extension is linked to.
+    pub campaign_id: String,
+    /// The asset ID of the extension.
+    pub asset_id: String,
+    /// Extension type: SITELINK, CALLOUT, or STRUCTURED_SNIPPET.
+    pub field_type: String,
+}
+
+/// Parameters for removing keywords from an ad group.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RemoveKeywordsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The ad group ID containing the keywords.
+    pub ad_group_id: String,
+    /// Criterion IDs to remove.
+    pub criterion_ids: Vec<String>,
+}
+
+/// Parameters for removing negative keywords from a campaign.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RemoveNegativeKeywordsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID containing the negative keywords.
+    pub campaign_id: String,
+    /// Criterion IDs to remove.
+    pub criterion_ids: Vec<String>,
+}
+
 // ── Tool router ─────────────────────────────────────────────────────────
 
 #[rmcp::tool_router]
@@ -389,6 +468,15 @@ impl GoogleAdsMcp {
         let customer_id = self.resolve_mcc_or_customer_id();
         self.run_tool(|client| async move {
             tools::accounts::list_accounts(&client, &customer_id).await
+        })
+        .await
+    }
+
+    #[tool(description = "Get detailed information about a Google Ads account (currency, timezone, status).")]
+    async fn get_account_info(&self, Parameters(params): Parameters<CustomerIdParams>) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        self.run_tool(|client| async move {
+            tools::accounts::get_account_info(&client, &cid).await
         })
         .await
     }
@@ -471,6 +559,22 @@ impl GoogleAdsMcp {
         .await
     }
 
+    // ── Extensions (read) ──────────────────────────────────────────────
+
+    #[tool(
+        description = "List campaign-level extensions (sitelinks, callouts, structured snippets). Returns up to 500 non-removed extensions."
+    )]
+    async fn list_extensions(
+        &self,
+        Parameters(params): Parameters<CustomerIdParams>,
+    ) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        self.run_tool(|client| async move {
+            tools::extensions::list_extensions(&client, &cid).await
+        })
+        .await
+    }
+
     // ── Reporting ───────────────────────────────────────────────────────
 
     #[tool(
@@ -511,6 +615,34 @@ impl GoogleAdsMcp {
             tools::geo::get_geo_performance(&client, &cid, ds.as_deref(), de.as_deref()).await
         })
         .await
+    }
+
+    // ── Ad Groups (write) ────────────────────────────────────────────────
+
+    #[tool(description = "Draft a new ad group in an existing campaign. Returns a preview — call confirm_and_apply to execute.")]
+    async fn create_ad_group(&self, Parameters(params): Parameters<CreateAdGroupToolParams>) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        match tools::ad_groups_write::create_ad_group(&config, &cid, &params.campaign_id, &params.ad_group_name, params.cpc_bid_micros) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(description = "Draft ad group updates (name, CPC bid). Returns a preview — call confirm_and_apply to execute.")]
+    async fn update_ad_group(&self, Parameters(params): Parameters<UpdateAdGroupToolParams>) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        match tools::ad_groups_write::update_ad_group(&config, &cid, &params.ad_group_id, params.name.as_deref(), params.cpc_bid_micros) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
     }
 
     // ── Write tools ──────────────────────────────────────────────────────
@@ -728,6 +860,79 @@ impl GoogleAdsMcp {
             &params.campaign_id,
             &params.header,
             params.values,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Draft REMOVING a campaign extension (IRREVERSIBLE). Specify campaign_id, asset_id, and field_type (SITELINK, CALLOUT, or STRUCTURED_SNIPPET)."
+    )]
+    async fn remove_extension(
+        &self,
+        Parameters(params): Parameters<RemoveExtensionToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::extensions_write::remove_extension(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.asset_id,
+            &params.field_type,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Draft REMOVING keywords from an ad group by criterion IDs (IRREVERSIBLE)."
+    )]
+    async fn remove_keywords(
+        &self,
+        Parameters(params): Parameters<RemoveKeywordsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::keywords_write::remove_keywords(
+            &config,
+            &cid,
+            &params.ad_group_id,
+            params.criterion_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Draft REMOVING negative keywords from a campaign by criterion IDs (IRREVERSIBLE)."
+    )]
+    async fn remove_negative_keywords(
+        &self,
+        Parameters(params): Parameters<RemoveNegativeKeywordsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::keywords_write::remove_negative_keywords(
+            &config,
+            &cid,
+            &params.campaign_id,
+            params.criterion_ids,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
@@ -1006,6 +1211,60 @@ impl GoogleAdsMcp {
         }
     }
 
+    // ── Keyword Planner ─────────────────────────────────────────────────
+
+    #[tool(description = "Discover keyword ideas from seed keywords using the Keyword Planner.")]
+    async fn discover_keywords(
+        &self,
+        Parameters(params): Parameters<DiscoverKeywordsToolParams>,
+    ) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        self.run_tool(|client| async move {
+            tools::keyword_planner::discover_keywords(&client, &cid, params.seed_keywords).await
+        })
+        .await
+    }
+
+    #[tool(description = "Get historical keyword performance metrics for forecasting.")]
+    async fn get_keyword_forecasts(
+        &self,
+        Parameters(params): Parameters<KeywordForecastsToolParams>,
+    ) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        self.run_tool(|client| async move {
+            tools::keyword_planner::get_keyword_forecasts(&client, &cid, params.keyword_texts).await
+        })
+        .await
+    }
+
+    // ── Policy ─────────────────────────────────────────────────────────
+
+    #[tool(description = "Get policy issues for ads (disapproved, limited, under review).")]
+    async fn get_policy_issues(
+        &self,
+        Parameters(params): Parameters<CustomerIdParams>,
+    ) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        self.run_tool(|client| async move {
+            tools::policy::get_policy_issues(&client, &cid).await
+        })
+        .await
+    }
+
+    // ── Conversions ────────────────────────────────────────────────────
+
+    #[tool(description = "List all conversion actions configured in the account.")]
+    async fn get_conversion_actions(
+        &self,
+        Parameters(params): Parameters<CustomerIdParams>,
+    ) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        self.run_tool(|client| async move {
+            tools::conversions::get_conversion_actions(&client, &cid).await
+        })
+        .await
+    }
+
     // ── Phase 5: Recommendations ────────────────────────────────────────
 
     #[tool(description = "List active (non-dismissed) recommendations for the account.")]
@@ -1222,8 +1481,8 @@ mod tests {
         let tools = server.tool_router.list_all();
 
         assert!(
-            tools.len() >= 30,
-            "Expected at least 30 tools, got {}. Some tools may be missing from the router.",
+            tools.len() >= 37,
+            "Expected at least 37 tools, got {}. Some tools may be missing from the router.",
             tools.len()
         );
     }

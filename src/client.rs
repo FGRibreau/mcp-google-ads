@@ -138,6 +138,52 @@ impl GoogleAdsClient {
         Ok(all_results)
     }
 
+    /// Call the Keyword Planner generateKeywordIdeas endpoint.
+    pub async fn generate_keyword_ideas(
+        &self,
+        customer_id: &str,
+        seed_keywords: Vec<String>,
+        page_size: Option<u32>,
+    ) -> Result<Vec<serde_json::Value>> {
+        let normalized_id = Self::normalize_customer_id(customer_id);
+        let url = format!(
+            "{}/customers/{}:generateKeywordIdeas",
+            BASE_URL, normalized_id
+        );
+        let headers = self.build_headers().await?;
+
+        let body = serde_json::json!({
+            "keywordSeed": {
+                "keywords": seed_keywords
+            },
+            "language": "languageConstants/1000",
+            "pageSize": page_size.unwrap_or(50),
+            "keywordPlanNetwork": "GOOGLE_SEARCH"
+        });
+
+        let response = self
+            .http
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(parse_google_ads_error(status, &error_body));
+        }
+
+        let response_json: serde_json::Value = response.json().await?;
+        let results = response_json
+            .get("results")
+            .and_then(|r| r.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(results)
+    }
+
     /// Execute a mutate request against the Google Ads API.
     pub async fn mutate(
         &self,

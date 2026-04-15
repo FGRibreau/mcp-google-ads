@@ -26,7 +26,7 @@ An MCP server that gives Claude full read + write access to Google Ads accounts 
 
 ## Features
 
-- **33 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, bidding, scheduling
+- **44 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, bidding, scheduling, keyword planner, conversions, policy
 - **Two-step safety** - All mutations return a preview; nothing executes until you confirm
 - **Budget guardrails** - Configurable daily budget cap, bid increase limits, broad+manual CPC blocker
 - **Audit logging** - Every mutation logged to a local JSON file with timestamp and dry-run status
@@ -40,7 +40,7 @@ An MCP server that gives Claude full read + write access to Google Ads accounts 
 ### 1. Build
 
 ```bash
-git clone https://github.com/YOUR_USER/mcp-google-ads.git
+git clone https://github.com/FGRibreau/mcp-google-ads.git
 cd mcp-google-ads
 cargo build --release
 ```
@@ -96,12 +96,13 @@ All configuration is via environment variables. No config files.
 
 ## Tools
 
-### Read (11 tools)
+### Read (17 tools)
 
 | Tool | Description |
 |------|-------------|
 | `health_check` | Check server connectivity and configuration |
 | `list_accounts` | List all accessible Google Ads accounts |
+| `get_account_info` | Account details (currency, timezone, status) |
 | `get_campaign_performance` | Campaign metrics (cost, clicks, conversions, CPA) |
 | `get_ad_performance` | Ad-level metrics with headlines and descriptions |
 | `get_keyword_performance` | Keyword metrics with quality scores |
@@ -111,8 +112,13 @@ All configuration is via environment variables. No config files.
 | `search_geo_targets` | Find location IDs for geo-targeting |
 | `get_geo_performance` | Performance breakdown by location |
 | `list_recommendations` | Active Google Ads recommendations |
+| `list_extensions` | List campaign extensions (sitelinks, callouts, snippets) |
+| `discover_keywords` | Keyword ideas from seed keywords (Keyword Planner) |
+| `get_keyword_forecasts` | Historical keyword metrics for forecasting |
+| `get_policy_issues` | Disapproved or limited ads and policy violations |
+| `get_conversion_actions` | Conversion actions configured in the account |
 
-### Write (22 tools)
+### Write (27 tools)
 
 All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` to execute.
 
@@ -121,11 +127,16 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `draft_campaign` | Create campaign (PAUSED) + ad group + keywords |
 | `update_campaign` | Modify budget, bidding, targeting |
 | `draft_responsive_search_ad` | Create RSA (3-15 headlines, 2-4 descriptions) |
+| `create_ad_group` | Create ad group in existing campaign |
+| `update_ad_group` | Modify ad group name or CPC bid |
 | `draft_keywords` | Add keywords with match types |
+| `remove_keywords` | Remove keywords from ad group (destructive) |
 | `add_negative_keywords` | Block irrelevant searches |
+| `remove_negative_keywords` | Remove negative keywords (destructive) |
 | `draft_sitelinks` | Sitelink extensions |
 | `create_callouts` | Callout extensions |
 | `create_structured_snippets` | Structured snippet extensions |
+| `remove_extension` | Remove a campaign extension (destructive) |
 | `create_pmax_campaign` | Performance Max campaign with text assets |
 | `create_custom_audience` | Remarketing / customer match audiences |
 | `add_audience_targeting` | Target audiences (TARGETING/OBSERVATION) |
@@ -193,9 +204,9 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 |---|---|---|---|---|---|
 | **Language** | Rust | Python | Python | Python | Python |
 | **API version** | v23 | v23 | v23 | v21 | v23 |
-| **Total tools** | 33 | 26 | 52 | 45+ | 2 |
-| **Write tools** | 22 | 8 | 26 | 25 | 0 |
-| **Tests** | 183 | partial | 0 | 0 | N/A |
+| **Total tools** | 44 | 43 | 52 | 63 | 2 |
+| **Write tools** | 27 | 16 | 26 | 25 | 0 |
+| **Tests** | 210 | partial | 0 | 0 | N/A |
 
 ### Features
 
@@ -203,14 +214,20 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 |---------|------|--------|-------------|-------------|----------|
 | Campaign creation | Search + PMax | Search | Search + PMax | 7 types | - |
 | RSA ads | yes | yes | yes | yes | - |
+| Ad group CRUD | yes | yes | yes | yes | - |
 | Keywords (positive + negative) | yes | yes | yes | yes | - |
-| Extensions (sitelinks, callouts, snippets) | yes | sitelinks only | yes | yes | - |
+| Keyword removal | yes | - | yes | yes | - |
+| Extensions (sitelinks, callouts, snippets) | yes | yes | yes | yes | - |
+| Extension listing & removal | yes | - | yes | yes | - |
 | Audiences | yes | - | - | yes | - |
 | Bid adjustments | yes | - | - | yes | - |
 | Geo targeting (set/remove) | yes | via update | yes | hardcoded US | - |
 | Ad scheduling | yes | - | yes | yes | - |
 | Asset upload (image/text) | yes | - | yes | yes | - |
 | Recommendations (apply/dismiss) | yes | - | yes | yes | - |
+| Keyword Planner (ideas + forecasts) | yes | yes | yes | - | - |
+| Conversion tracking | yes | - | yes | - | - |
+| Policy issues (disapproved ads) | yes | - | yes | - | - |
 | Arbitrary GAQL queries | yes | yes | - | - | yes |
 | GA4 integration | - | yes | - | - | - |
 
@@ -228,7 +245,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | Read-only mode | yes | - | - | - | N/A |
 | Blocked operations list | yes | - | - | - | N/A |
 | Input validation (char limits, URLs) | yes | yes | Pydantic | partial | N/A |
-| Unit test coverage | 183 tests | partial | 0 | 0 | N/A |
+| Unit test coverage | 210 tests | partial | 0 | 0 | N/A |
 | Binary size / startup | 10.8 MB / instant | Python | Python | Python | Python |
 
 ---
@@ -237,8 +254,8 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 
 ```bash
 cargo build              # Build debug
-cargo build --release     # Build release (10.8 MB binary)
-cargo test                # Run 183 tests
+cargo build --release     # Build release binary
+cargo test                # Run 210 tests
 cargo clippy -- -D warnings
 cargo fmt --check
 ```
