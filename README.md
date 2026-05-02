@@ -21,21 +21,6 @@
 
 ---
 
-## What is this?
-
-An MCP server that gives Claude full read + write access to Google Ads accounts via the REST API. Every write operation goes through a two-step safety layer: draft a change, review the preview, then confirm to execute. Budget caps, bid limits, and audit logging prevent accidental spend.
-
-## Features
-
-- **44 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, bidding, scheduling, keyword planner, conversions, policy
-- **Two-step safety** - All mutations return a preview; nothing executes until you confirm
-- **Budget guardrails** - Configurable daily budget cap, bid increase limits, broad+manual CPC blocker
-- **Audit logging** - Every mutation logged to a local JSON file with timestamp and dry-run status
-- **Read-only mode** - Expose only read tools for safe observability
-- **Zero config files** - Configured entirely via environment variables
-
----
-
 ## Sponsors
 
 <table>
@@ -63,8 +48,8 @@ An MCP server that gives Claude full read + write access to Google Ads accounts 
     </td>
     <td align="center" width="175">
       <a href="https://netir.fr/?mtm_source=github&mtm_medium=sponsor&mtm_campaign=netir&mtm_content=mcp-google-ads">
-        <img src="assets/sponsors/netir.svg" height="60" alt="NetIR"/><br/>
-        <b>NetIR</b>
+        <img src="assets/sponsors/netir.svg" height="60" alt="Netir"/><br/>
+        <b>Netir</b>
       </a><br/>
       <sub>Hire vetted French freelance ad ops experts via mentored marketplace.</sub>
     </td>
@@ -95,6 +80,21 @@ An MCP server that gives Claude full read + write access to Google Ads accounts 
 </table>
 
 > **Interested in sponsoring?** [Get in touch](mailto:rust@fgribreau.com)
+
+---
+
+## What is this?
+
+An MCP server that gives Claude full read + write access to Google Ads accounts via the REST API. Every write operation goes through a two-step safety layer: draft a change, review the preview, then confirm to execute. Budget caps, bid limits, and audit logging prevent accidental spend.
+
+## Features
+
+- **44 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, bidding, scheduling, keyword planner, conversions, policy
+- **Two-step safety** - All mutations return a preview; nothing executes until you confirm
+- **Budget guardrails** - Configurable daily budget cap, bid increase limits, broad+manual CPC blocker
+- **Audit logging** - Every mutation logged to a local JSON file with timestamp and dry-run status
+- **Read-only mode** - Expose only read tools for safe observability
+- **Zero config files** - Configured entirely via environment variables
 
 ---
 
