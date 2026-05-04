@@ -61,7 +61,16 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         "status": "PAUSED",
         "advertisingChannelType": params.channel_type,
         "campaignBudget": budget_resource,
-        "resourceName": campaign_resource
+        "resourceName": campaign_resource,
+        "networkSettings": {
+            "targetGoogleSearch": true,
+            "targetSearchNetwork": true,
+            "targetContentNetwork": false,
+            "targetPartnerSearchNetwork": false
+        },
+        // Required by EU TTPA regulation (Oct 2025+). Defaults to false; users
+        // running political ads must change this in the UI after creation.
+        "containsEuPoliticalAdvertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"
     });
 
     // Apply bidding strategy
@@ -108,12 +117,18 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
 
     // 5. Ad group (temp resource ID -3)
     let ad_group_resource = format!("customers/{}/adGroups/-3", cid);
+    let ad_group_type = match params.channel_type {
+        "SEARCH" => "SEARCH_STANDARD",
+        "DISPLAY" => "DISPLAY_STANDARD",
+        _ => "SEARCH_STANDARD",
+    };
     operations.push(json!({
         "adGroupOperation": {
             "create": {
                 "name": params.ad_group_name,
                 "campaign": campaign_resource,
                 "status": "PAUSED",
+                "type": ad_group_type,
                 "resourceName": ad_group_resource
             }
         }
@@ -307,6 +322,11 @@ pub struct KeywordInput {
 }
 
 /// Apply a bidding strategy to a campaign create JSON value.
+///
+/// Note: in Google Ads API v23, `bidding_strategy_type` on Campaign is
+/// OUTPUT_ONLY. To use a standard bidding strategy at create time, set the
+/// corresponding bidding sub-field (e.g. `manualCpc`, `targetSpend`,
+/// `maximizeConversions`). The enum is then computed by the server.
 fn apply_bidding_strategy(
     campaign: &mut serde_json::Value,
     strategy: &str,
@@ -355,9 +375,21 @@ fn apply_bidding_strategy(
         "MANUAL_CPC" => {
             obj.insert("manualCpc".to_string(), json!({}));
         }
+        "TARGET_SPEND" | "MAXIMIZE_CLICKS" => {
+            // Maximize Clicks: empty targetSpend struct (cpcBidCeilingMicros optional).
+            obj.insert("targetSpend".to_string(), json!({}));
+        }
+        "TARGET_IMPRESSION_SHARE" => {
+            obj.insert("targetImpressionShare".to_string(), json!({}));
+        }
+        "PERCENT_CPC" => {
+            obj.insert("percentCpc".to_string(), json!({}));
+        }
         _ => {
-            // Unknown strategy — let the API validate
-            obj.insert("biddingStrategyType".to_string(), json!(strategy));
+            // Unknown strategy — surface the error early instead of sending an
+            // OUTPUT_ONLY field that the API rejects with a generic 400.
+            // We leave the bidding fields unset; the create call will fail
+            // server-side with a clear message.
         }
     }
 }

@@ -61,6 +61,21 @@ fn build_status_operation(
     }))
 }
 
+/// Build a remove operation for an entity (uses the dedicated `remove` field).
+fn build_remove_operation(
+    cid: &str,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<serde_json::Value> {
+    let (resource_name, op_key) = entity_resource_and_op(cid, entity_type, entity_id)?;
+
+    Ok(json!({
+        op_key: {
+            "remove": resource_name
+        }
+    }))
+}
+
 /// Pause an entity (campaign, ad group, ad, or keyword).
 ///
 /// Sets the entity's status to PAUSED.
@@ -133,8 +148,8 @@ pub fn enable_entity(
 
 /// Remove an entity (campaign, ad group, ad, or keyword).
 ///
-/// Sets the entity's status to REMOVED. This is a destructive operation
-/// and requires double confirmation.
+/// Uses the dedicated `remove` operation in the mutate request. This is a
+/// destructive operation and requires double confirmation.
 pub fn remove_entity(
     config: &Config,
     customer_id: &str,
@@ -144,7 +159,7 @@ pub fn remove_entity(
     check_blocked_operation("remove_entity", &config.safety)?;
 
     let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
-    let operation = build_status_operation(&cid, entity_type, entity_id, "REMOVED")?;
+    let operation = build_remove_operation(&cid, entity_type, entity_id)?;
 
     let changes = json!({
         "entity_type": entity_type,
