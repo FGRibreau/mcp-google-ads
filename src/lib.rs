@@ -945,14 +945,17 @@ impl GoogleAdsMcp {
             return err;
         }
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let entity_id = match self
+            .resolve_entity_id_for_status(&cid, &params.entity_type, &params.entity_id)
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => return serde_json::json!({"error": e}).to_string(),
+        };
         let config = self.config.clone();
 
-        match tools::entity_lifecycle::pause_entity(
-            &config,
-            &cid,
-            &params.entity_type,
-            &params.entity_id,
-        ) {
+        match tools::entity_lifecycle::pause_entity(&config, &cid, &params.entity_type, &entity_id)
+        {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
@@ -964,14 +967,17 @@ impl GoogleAdsMcp {
             return err;
         }
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let entity_id = match self
+            .resolve_entity_id_for_status(&cid, &params.entity_type, &params.entity_id)
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => return serde_json::json!({"error": e}).to_string(),
+        };
         let config = self.config.clone();
 
-        match tools::entity_lifecycle::enable_entity(
-            &config,
-            &cid,
-            &params.entity_type,
-            &params.entity_id,
-        ) {
+        match tools::entity_lifecycle::enable_entity(&config, &cid, &params.entity_type, &entity_id)
+        {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
@@ -985,14 +991,17 @@ impl GoogleAdsMcp {
             return err;
         }
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let entity_id = match self
+            .resolve_entity_id_for_status(&cid, &params.entity_type, &params.entity_id)
+            .await
+        {
+            Ok(id) => id,
+            Err(e) => return serde_json::json!({"error": e}).to_string(),
+        };
         let config = self.config.clone();
 
-        match tools::entity_lifecycle::remove_entity(
-            &config,
-            &cid,
-            &params.entity_type,
-            &params.entity_id,
-        ) {
+        match tools::entity_lifecycle::remove_entity(&config, &cid, &params.entity_type, &entity_id)
+        {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
@@ -1387,6 +1396,53 @@ impl GoogleAdsMcp {
             )
         } else {
             None
+        }
+    }
+
+    /// Resolve the composite ad resource id `{ad_group_id}~{ad_id}` from a
+    /// bare `ad_id`. Returns the input unchanged if it already contains `~`.
+    ///
+    /// Google Ads API addresses ads through the `adGroupAd` resource whose
+    /// id is the composite `{ad_group_id}~{ad_id}`. Calling `mutate` against
+    /// `customers/{cid}/adGroupAds/{ad_id}` alone fails with BAD_RESOURCE_ID.
+    /// This helper runs a single GAQL query to retrieve the owning ad_group
+    /// for the given ad, then assembles the composite id.
+    async fn resolve_ad_composite_id(&self, cid: &str, ad_id: &str) -> Result<String, String> {
+        if ad_id.contains('~') {
+            return Ok(ad_id.to_string());
+        }
+        let client = GoogleAdsClient::new(&self.config).map_err(|e| e.to_string())?;
+        let query = format!(
+            "SELECT ad_group.id FROM ad_group_ad WHERE ad_group_ad.ad.id = {}",
+            ad_id
+        );
+        let result = tools::reporting::run_gaql(&client, cid, &query, "json")
+            .await
+            .map_err(|e| e.to_string())?;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&result).map_err(|e| format!("invalid GAQL JSON: {e}"))?;
+        let ag_id = parsed["results"][0]["adGroup"]["id"]
+            .as_str()
+            .ok_or_else(|| {
+                format!(
+                    "no ad_group found for ad_id={ad_id} (does the ad exist in this customer?)"
+                )
+            })?;
+        Ok(format!("{}~{}", ag_id, ad_id))
+    }
+
+    /// Resolve `entity_id` for status-change operations, expanding bare ad ids
+    /// to the `{ad_group_id}~{ad_id}` composite required by the Google Ads API.
+    async fn resolve_entity_id_for_status(
+        &self,
+        cid: &str,
+        entity_type: &str,
+        entity_id: &str,
+    ) -> Result<String, String> {
+        if entity_type == "ad" {
+            self.resolve_ad_composite_id(cid, entity_id).await
+        } else {
+            Ok(entity_id.to_string())
         }
     }
 
