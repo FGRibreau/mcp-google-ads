@@ -187,10 +187,10 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 
 | Tool | Description |
 |------|-------------|
-| `draft_campaign` | Create campaign (PAUSED) + ad group + keywords |
+| `draft_campaign` | Create campaign + ad group + keywords. Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
 | `update_campaign` | Modify budget, bidding, targeting |
-| `draft_responsive_search_ad` | Create RSA (3-15 headlines, 2-4 descriptions) |
-| `create_ad_group` | Create ad group in existing campaign |
+| `draft_responsive_search_ad` | Create RSA (3-15 headlines, 2-4 descriptions). Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
+| `create_ad_group` | Create ad group in existing campaign. Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
 | `update_ad_group` | Modify ad group name or CPC bid |
 | `draft_keywords` | Add keywords with match types |
 | `remove_keywords` | Remove keywords from ad group (destructive) |
@@ -226,11 +226,13 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | **Budget cap** | Rejects campaigns exceeding `GOOGLE_ADS_MAX_DAILY_BUDGET` |
 | **Bid limit** | Rejects bid increases exceeding `GOOGLE_ADS_MAX_BID_INCREASE_PCT` |
 | **Broad + Manual CPC** | Blocks BROAD match with MANUAL_CPC (burns budget) |
-| **PAUSED by default** | New campaigns and ads are created PAUSED |
+| **PAUSED by default** | New campaigns/ad groups/ads created PAUSED. Response carries `status_after_apply` + `next_action_hint` describing how to flip to `ENABLED` via the `enable_entity` MCP tool — zero UI step needed. |
+| **`require_dry_run` hard guard** | When `GOOGLE_ADS_REQUIRE_DRY_RUN=true`, calling `confirm_and_apply` with `dry_run=false` returns `Err(DryRunRequired)` BEFORE any HTTP traffic. Pass `bypass_require_dry_run=true` for a one-shot override. |
+| **Double-confirm hard guard** | Destructive ops flagged `requires_double_confirm` need `confirmed_twice=true` or return `Err(DoubleConfirmRequired)`. |
+| **MutateOperation whitelist** | Unknown top-level operation keys (typos, recommendation ops mis-routed) are rejected client-side BEFORE the HTTP call with a clear error pointing at the correct tool. |
 | **Blocked operations** | Configure `GOOGLE_ADS_BLOCKED_OPS` to disable specific tools |
 | **Read-only mode** | Set `GOOGLE_ADS_READ_ONLY=true` to disable all writes |
 | **Audit logging** | Every mutation logged with timestamp, operation, changes, dry_run status |
-| **Double confirmation** | Destructive ops (remove) and large budget increases require double confirm |
 
 ---
 
@@ -313,15 +315,96 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 
 ---
 
+## Migrating from v0.2.x
+
+v0.3.0 introduces breaking changes that strengthen the safety surface and
+unlock zero-UI workflows for agents. Most callers only need to add a
+`status: None` field to their existing draft structs.
+
+### MCP-tool callers (the common case)
+
+If you only invoke MCP tools through Claude / an MCP host, **no migration
+needed** — the new params are all optional. You can now:
+
+- Pass `status: "ENABLED"` when calling `draft_campaign` /
+  `draft_responsive_search_ad` / `create_ad_group` to start the entity
+  serving immediately. Default remains `PAUSED`.
+- Pass `bypass_require_dry_run: true` to `confirm_and_apply` when you
+  intentionally want to skip the dry-run guard (one-shot override).
+- Pass `confirmed_twice: true` to `confirm_and_apply` for destructive
+  plans flagged `requires_double_confirm`.
+- Read `status_after_apply` and `next_action_hint` from any draft / apply
+  response to know whether a follow-up `enable_entity` call is needed.
+
+### Library callers (Rust API)
+
+```rust
+// v0.2.x
+DraftRsaParams { config, customer_id, ad_group_id, headlines, descriptions,
+                 final_url, path1, path2 }
+
+// v0.3.0
+DraftRsaParams { config, customer_id, ad_group_id, headlines, descriptions,
+                 final_url, path1, path2, status: None }
+//                                       ^^^^^^^^^^^^^ new field
+```
+
+```rust
+// v0.2.x
+DraftCampaignParams { ..., geo_target_ids, language_ids }
+
+// v0.3.0
+DraftCampaignParams { ..., geo_target_ids, language_ids, status: None }
+```
+
+```rust
+// v0.2.x — defaulted to ENABLED (the only outlier)
+create_ad_group(&config, cid, campaign_id, name, bid)
+
+// v0.3.0 — default PAUSED (consistent with other write tools)
+create_ad_group(&config, cid, campaign_id, name, bid, None)
+// Equivalent v0.2.x behaviour:
+create_ad_group(&config, cid, campaign_id, name, bid, Some(AdStatus::Enabled))
+```
+
+```rust
+// v0.2.x
+tools::confirm::confirm_and_apply(&config, plan_id, dry_run).await
+
+// v0.3.0
+tools::confirm::confirm_and_apply(&config, ConfirmApplyInput {
+    plan_id: plan_id.to_string(),
+    dry_run,
+    bypass_require_dry_run: false,
+    confirmed_twice: false,
+}).await
+```
+
+### Behaviour changes (no API change needed)
+
+- `apply_recommendation` / `dismiss_recommendation` now actually work.
+  v0.2.x routed them through `googleAds:mutate` and got 400.
+- `require_dry_run = true` now blocks rather than just warning.
+- `create_pmax_campaign(start_paused = false)` actually produces an
+  `ENABLED` campaign (v0.2.x ignored the param).
+
+See [CHANGELOG.md](CHANGELOG.md) for the full breakdown.
+
+---
+
 ## Development
 
 ```bash
 cargo build              # Build debug
-cargo build --release     # Build release binary
-cargo test                # Run 210 tests
-cargo clippy -- -D warnings
+cargo build --release    # Build release binary
+cargo test               # Unit + wiremock integration tests (no credentials needed)
+cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --check
 ```
+
+The `tests/integration_test.rs` suite requires real Google Ads test
+credentials (`GOOGLE_ADS_TEST_*` env vars); the rest of the test files
+(13 wiremock-driven suites) run without any credentials.
 
 ---
 
