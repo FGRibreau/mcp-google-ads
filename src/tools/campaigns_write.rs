@@ -4,6 +4,7 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::error::Result;
+use crate::models::{AdStatus, NextActionHint};
 use crate::safety::guards::{check_blocked_operation, check_budget_cap};
 use crate::safety::preview::{store_plan, ChangePlan};
 
@@ -13,6 +14,12 @@ fn dollars_to_micros(dollars: f64) -> i64 {
 }
 
 /// Parameters for drafting a new campaign.
+///
+/// `status` defaults to [`AdStatus::Paused`] when `None` — newly drafted
+/// campaigns ship paused for safety. The chosen status is echoed back in
+/// the response as `status_after_apply`; when paused, a `next_action_hint`
+/// also describes how to enable the campaign via the `enable_entity` MCP
+/// tool (zero UI action required).
 pub struct DraftCampaignParams<'a> {
     pub config: &'a Config,
     pub customer_id: &'a str,
@@ -26,6 +33,8 @@ pub struct DraftCampaignParams<'a> {
     pub keywords: Vec<KeywordInput>,
     pub geo_target_ids: Vec<String>,
     pub language_ids: Vec<String>,
+    /// Lifecycle status to create the campaign in. `None` -> default `PAUSED`.
+    pub status: Option<AdStatus>,
 }
 
 /// Draft a new campaign with budget, ad group, and optional keywords.
@@ -56,9 +65,10 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
 
     // 2. Campaign (temp resource ID -2)
     let campaign_resource = format!("customers/{}/campaigns/-2", cid);
+    let campaign_status = params.status.unwrap_or_default();
     let mut campaign_create = json!({
         "name": params.campaign_name,
-        "status": "PAUSED",
+        "status": campaign_status.as_api_str(),
         "advertisingChannelType": params.channel_type,
         "campaignBudget": budget_resource,
         "resourceName": campaign_resource,
@@ -122,12 +132,14 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         "DISPLAY" => "DISPLAY_STANDARD",
         _ => "SEARCH_STANDARD",
     };
+    // Ad group inherits the campaign-level status — keeping both PAUSED
+    // (or both ENABLED) avoids a half-running campaign state.
     operations.push(json!({
         "adGroupOperation": {
             "create": {
                 "name": params.ad_group_name,
                 "campaign": campaign_resource,
-                "status": "PAUSED",
+                "status": campaign_status.as_api_str(),
                 "type": ad_group_type,
                 "resourceName": ad_group_resource
             }
@@ -159,10 +171,11 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         "ad_group_name": params.ad_group_name,
         "keywords_count": params.keywords.len(),
         "geo_targets": params.geo_target_ids,
-        "languages": params.language_ids
+        "languages": params.language_ids,
+        "status": campaign_status.as_api_str()
     });
 
-    let plan = ChangePlan::new(
+    let mut plan = ChangePlan::new(
         "draft_campaign".to_string(),
         "campaign".to_string(),
         "new".to_string(),
@@ -170,7 +183,14 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         changes,
         false,
         operations,
-    );
+    )
+    .with_status_after_apply(campaign_status);
+
+    if campaign_status == AdStatus::Paused {
+        plan = plan.with_next_action_hint(NextActionHint::enable_parent_campaign_after_create(
+            "customers/{cid}/campaigns/-2",
+        ));
+    }
 
     let preview = plan.to_preview();
     store_plan(plan);
@@ -486,6 +506,7 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            status: None,
         });
 
         assert!(result.is_err());
@@ -511,6 +532,7 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            status: None,
         });
 
         assert!(result.is_err());
@@ -538,6 +560,7 @@ mod tests {
             }],
             geo_target_ids: vec!["2840".to_string()],
             language_ids: vec!["1000".to_string()],
+            status: None,
         });
 
         assert!(result.is_ok());
@@ -609,6 +632,52 @@ mod tests {
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn test_draft_campaign_default_status_paused_with_hint() {
+        let config = Config::default();
+        let preview = draft_campaign(&DraftCampaignParams {
+            config: &config,
+            customer_id: "123-456-7890",
+            campaign_name: "C1",
+            daily_budget: 5.0,
+            bidding_strategy: "MAXIMIZE_CONVERSIONS",
+            target_cpa: None,
+            target_roas: None,
+            channel_type: "SEARCH",
+            ad_group_name: "AG1",
+            keywords: vec![],
+            geo_target_ids: vec![],
+            language_ids: vec![],
+            status: None,
+        })
+        .unwrap();
+        assert_eq!(preview["status_after_apply"], "PAUSED");
+        assert_eq!(preview["next_action_hint"]["tool"], "enable_entity");
+    }
+
+    #[test]
+    fn test_draft_campaign_explicit_enabled_no_hint() {
+        let config = Config::default();
+        let preview = draft_campaign(&DraftCampaignParams {
+            config: &config,
+            customer_id: "123-456-7890",
+            campaign_name: "C1",
+            daily_budget: 5.0,
+            bidding_strategy: "MAXIMIZE_CONVERSIONS",
+            target_cpa: None,
+            target_roas: None,
+            channel_type: "SEARCH",
+            ad_group_name: "AG1",
+            keywords: vec![],
+            geo_target_ids: vec![],
+            language_ids: vec![],
+            status: Some(AdStatus::Enabled),
+        })
+        .unwrap();
+        assert_eq!(preview["status_after_apply"], "ENABLED");
+        assert!(preview.get("next_action_hint").is_none() || preview["next_action_hint"].is_null());
     }
 
     #[test]

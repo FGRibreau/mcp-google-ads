@@ -2,10 +2,17 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::error::{McpGoogleAdsError, Result};
+use crate::models::{AdStatus, NextActionHint};
 use crate::safety::guards::check_blocked_operation;
 use crate::safety::preview::{store_plan, ChangePlan};
 
 /// Draft creating a new ad group in an existing campaign.
+///
+/// `status` defaults to [`AdStatus::Paused`] when `None`, consistent with
+/// the rest of the write tools — newly drafted entities ship paused for
+/// safety. When the default `PAUSED` is in effect the response carries a
+/// `next_action_hint` pointing at the `enable_entity` MCP tool so the
+/// agent can complete the workflow without any UI step.
 ///
 /// Returns a ChangePlan preview that must be confirmed via `confirm_and_apply`.
 pub fn create_ad_group(
@@ -14,6 +21,7 @@ pub fn create_ad_group(
     campaign_id: &str,
     ad_group_name: &str,
     cpc_bid_micros: Option<i64>,
+    status: Option<AdStatus>,
 ) -> Result<serde_json::Value> {
     check_blocked_operation("create_ad_group", &config.safety)?;
 
@@ -25,11 +33,12 @@ pub fn create_ad_group(
 
     let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
     let campaign_resource = format!("customers/{}/campaigns/{}", cid, campaign_id);
+    let resolved_status = status.unwrap_or_default();
 
     let mut create = json!({
         "campaign": campaign_resource,
         "name": ad_group_name,
-        "status": "ENABLED",
+        "status": resolved_status.as_api_str(),
         "type": "SEARCH_STANDARD"
     });
 
@@ -47,9 +56,10 @@ pub fn create_ad_group(
         "campaign_id": campaign_id,
         "ad_group_name": ad_group_name,
         "cpc_bid_micros": cpc_bid_micros,
+        "status": resolved_status.as_api_str(),
     });
 
-    let plan = ChangePlan::new(
+    let mut plan = ChangePlan::new(
         "create_ad_group".to_string(),
         "ad_group".to_string(),
         "new".to_string(),
@@ -57,7 +67,14 @@ pub fn create_ad_group(
         changes,
         false,
         vec![operation],
-    );
+    )
+    .with_status_after_apply(resolved_status);
+
+    if resolved_status == AdStatus::Paused {
+        plan = plan.with_next_action_hint(NextActionHint::enable_ad_group(
+            "<resolve ad_group_id from confirm_and_apply response>",
+        ));
+    }
 
     let preview = plan.to_preview();
     store_plan(plan);
@@ -134,7 +151,14 @@ mod tests {
     #[test]
     fn test_create_ad_group_success() {
         let config = Config::default();
-        let result = create_ad_group(&config, "123-456-7890", "111", "My Ad Group", Some(2_000_000));
+        let result = create_ad_group(
+            &config,
+            "123-456-7890",
+            "111",
+            "My Ad Group",
+            Some(2_000_000),
+            None,
+        );
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "create_ad_group");
@@ -145,9 +169,39 @@ mod tests {
     }
 
     #[test]
+    fn test_create_ad_group_default_status_paused_with_hint() {
+        // Consistency: ad_group default is PAUSED (was ENABLED in v0.2.x, the
+        // only outlier among the write tools). Now matches campaigns/ads/pmax.
+        let config = Config::default();
+        let preview = create_ad_group(&config, "123-456-7890", "111", "AG1", None, None).unwrap();
+        assert_eq!(preview["status_after_apply"], "PAUSED");
+        assert_eq!(preview["next_action_hint"]["tool"], "enable_entity");
+        assert_eq!(
+            preview["next_action_hint"]["params"]["entity_type"],
+            "ad_group"
+        );
+    }
+
+    #[test]
+    fn test_create_ad_group_explicit_enabled_no_hint() {
+        let config = Config::default();
+        let preview = create_ad_group(
+            &config,
+            "123-456-7890",
+            "111",
+            "AG1",
+            None,
+            Some(AdStatus::Enabled),
+        )
+        .unwrap();
+        assert_eq!(preview["status_after_apply"], "ENABLED");
+        assert!(preview.get("next_action_hint").is_none() || preview["next_action_hint"].is_null());
+    }
+
+    #[test]
     fn test_create_ad_group_without_bid() {
         let config = Config::default();
-        let result = create_ad_group(&config, "123-456-7890", "111", "My Ad Group", None);
+        let result = create_ad_group(&config, "123-456-7890", "111", "My Ad Group", None, None);
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "create_ad_group");
@@ -157,7 +211,7 @@ mod tests {
     #[test]
     fn test_create_ad_group_empty_name() {
         let config = Config::default();
-        let result = create_ad_group(&config, "123-456-7890", "111", "", None);
+        let result = create_ad_group(&config, "123-456-7890", "111", "", None, None);
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("ad_group_name must not be empty"));
@@ -167,7 +221,7 @@ mod tests {
     fn test_create_ad_group_blocked() {
         let mut config = Config::default();
         config.safety.blocked_operations = vec!["create_ad_group".to_string()];
-        let result = create_ad_group(&config, "123-456-7890", "111", "Test", None);
+        let result = create_ad_group(&config, "123-456-7890", "111", "Test", None, None);
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("blocked"));
@@ -197,7 +251,13 @@ mod tests {
     #[test]
     fn test_update_ad_group_both_fields() {
         let config = Config::default();
-        let result = update_ad_group(&config, "123-456-7890", "555", Some("Updated"), Some(1_500_000));
+        let result = update_ad_group(
+            &config,
+            "123-456-7890",
+            "555",
+            Some("Updated"),
+            Some(1_500_000),
+        );
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["changes"]["name"], "Updated");

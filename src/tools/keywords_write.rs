@@ -415,12 +415,7 @@ mod tests {
     fn test_remove_keywords_blocked() {
         let mut config = Config::default();
         config.safety.blocked_operations = vec!["remove_keywords".to_string()];
-        let result = remove_keywords(
-            &config,
-            "123-456-7890",
-            "111",
-            vec!["555".to_string()],
-        );
+        let result = remove_keywords(&config, "123-456-7890", "111", vec!["555".to_string()]);
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("blocked"));
@@ -455,12 +450,8 @@ mod tests {
     fn test_remove_negative_keywords_blocked() {
         let mut config = Config::default();
         config.safety.blocked_operations = vec!["remove_negative_keywords".to_string()];
-        let result = remove_negative_keywords(
-            &config,
-            "123-456-7890",
-            "222",
-            vec!["777".to_string()],
-        );
+        let result =
+            remove_negative_keywords(&config, "123-456-7890", "222", vec!["777".to_string()]);
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("blocked"));

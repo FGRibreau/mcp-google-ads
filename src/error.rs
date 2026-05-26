@@ -18,6 +18,14 @@ pub enum McpGoogleAdsError {
     PlanNotFound(String),
     #[error("Validation error: {0}")]
     Validation(String),
+    #[error(
+        "Safety guard: require_dry_run is enabled but dry_run=false. \
+         Either run with dry_run=true first, or set bypass_require_dry_run=true \
+         to explicitly opt out of the guard for this single apply."
+    )]
+    DryRunRequired,
+    #[error("Safety guard: this plan requires double confirmation. Pass confirmed_twice=true to proceed.")]
+    DoubleConfirmRequired,
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
     #[error("IO error: {0}")]

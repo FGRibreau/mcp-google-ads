@@ -2,10 +2,18 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::error::{McpGoogleAdsError, Result};
+use crate::models::{AdStatus, NextActionHint};
 use crate::safety::guards::{check_blocked_operation, validate_description, validate_headline};
 use crate::safety::preview::{store_plan, ChangePlan};
 
 /// Parameters for drafting a Responsive Search Ad.
+///
+/// `status` defaults to [`AdStatus::Paused`] when `None` — newly drafted
+/// ads ship paused so an agent can review before traffic flows. Set
+/// `status = Some(AdStatus::Enabled)` to opt out. The chosen status is
+/// echoed in the response as `status_after_apply`, and when the default
+/// `PAUSED` is used the response also carries a `next_action_hint`
+/// describing how to enable the ad via the `enable_entity` MCP tool.
 pub struct DraftRsaParams<'a> {
     pub config: &'a Config,
     pub customer_id: &'a str,
@@ -15,12 +23,20 @@ pub struct DraftRsaParams<'a> {
     pub final_url: &'a str,
     pub path1: Option<&'a str>,
     pub path2: Option<&'a str>,
+    /// Lifecycle status to create the ad in.
+    /// `None` means default behaviour: [`AdStatus::Paused`].
+    pub status: Option<AdStatus>,
 }
 
 /// Draft a Responsive Search Ad (RSA).
 ///
 /// Validates headline and description counts and character limits, then creates
-/// a ChangePlan preview. The ad is created in PAUSED status.
+/// a ChangePlan preview.
+///
+/// Default status is `PAUSED` (safety) — pass `status = Some(AdStatus::Enabled)`
+/// to bypass. The response always carries `status_after_apply`, and when the
+/// default `PAUSED` is in effect, also a `next_action_hint` pointing at the
+/// `enable_entity` MCP tool so the workflow can complete with zero UI step.
 ///
 /// Requirements:
 /// - 3 to 15 headlines, each max 30 characters
@@ -96,12 +112,13 @@ pub fn draft_responsive_search_ad(params: &DraftRsaParams) -> Result<serde_json:
         }
     }
 
+    let resolved_status = params.status.unwrap_or_default();
     let operation = json!({
         "adGroupAdOperation": {
             "create": {
                 "adGroup": ad_group_resource,
                 "ad": ad,
-                "status": "PAUSED"
+                "status": resolved_status.as_api_str()
             }
         }
     });
@@ -112,10 +129,11 @@ pub fn draft_responsive_search_ad(params: &DraftRsaParams) -> Result<serde_json:
         "descriptions": params.descriptions,
         "final_url": params.final_url,
         "path1": params.path1,
-        "path2": params.path2
+        "path2": params.path2,
+        "status": resolved_status.as_api_str()
     });
 
-    let plan = ChangePlan::new(
+    let mut plan = ChangePlan::new(
         "draft_responsive_search_ad".to_string(),
         "ad".to_string(),
         "new".to_string(),
@@ -123,7 +141,17 @@ pub fn draft_responsive_search_ad(params: &DraftRsaParams) -> Result<serde_json:
         changes,
         false,
         vec![operation],
-    );
+    )
+    .with_status_after_apply(resolved_status);
+
+    // Only attach a next_action_hint when the entity ships PAUSED — when an
+    // agent explicitly opted into ENABLED, no further step is needed.
+    if resolved_status == AdStatus::Paused {
+        plan = plan.with_next_action_hint(NextActionHint::enable_ad(
+            params.ad_group_id,
+            "<resolve ad_id from confirm_and_apply response>",
+        ));
+    }
 
     let preview = plan.to_preview();
     store_plan(plan);
@@ -157,6 +185,7 @@ mod tests {
             final_url: "https://example.com",
             path1: None,
             path2: None,
+            status: None,
         });
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
@@ -175,6 +204,7 @@ mod tests {
             final_url: "https://example.com",
             path1: None,
             path2: None,
+            status: None,
         });
         assert!(result.is_err());
     }
@@ -191,6 +221,7 @@ mod tests {
             final_url: "https://example.com",
             path1: None,
             path2: None,
+            status: None,
         });
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
@@ -211,6 +242,7 @@ mod tests {
             final_url: "https://example.com",
             path1: None,
             path2: None,
+            status: None,
         });
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
@@ -229,11 +261,51 @@ mod tests {
             final_url: "https://example.com",
             path1: Some("path1"),
             path2: Some("path2"),
+            status: None,
         });
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "draft_responsive_search_ad");
         assert_eq!(preview["status"], "PENDING_CONFIRMATION");
+    }
+
+    #[test]
+    fn test_draft_rsa_default_status_paused_with_hint() {
+        let config = Config::default();
+        let preview = draft_responsive_search_ad(&DraftRsaParams {
+            config: &config,
+            customer_id: "123-456-7890",
+            ad_group_id: "111",
+            headlines: make_headlines(3),
+            descriptions: make_descriptions(2),
+            final_url: "https://example.com",
+            path1: None,
+            path2: None,
+            status: None,
+        })
+        .unwrap();
+        assert_eq!(preview["status_after_apply"], "PAUSED");
+        assert_eq!(preview["next_action_hint"]["tool"], "enable_entity");
+        assert_eq!(preview["next_action_hint"]["params"]["entity_type"], "ad");
+    }
+
+    #[test]
+    fn test_draft_rsa_explicit_enabled_no_hint() {
+        let config = Config::default();
+        let preview = draft_responsive_search_ad(&DraftRsaParams {
+            config: &config,
+            customer_id: "123-456-7890",
+            ad_group_id: "111",
+            headlines: make_headlines(3),
+            descriptions: make_descriptions(2),
+            final_url: "https://example.com",
+            path1: None,
+            path2: None,
+            status: Some(AdStatus::Enabled),
+        })
+        .unwrap();
+        assert_eq!(preview["status_after_apply"], "ENABLED");
+        assert!(preview.get("next_action_hint").is_none() || preview["next_action_hint"].is_null());
     }
 
     #[test]
@@ -249,6 +321,7 @@ mod tests {
             final_url: "https://example.com",
             path1: None,
             path2: None,
+            status: None,
         });
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
@@ -267,6 +340,7 @@ mod tests {
             final_url: "https://example.com",
             path1: None,
             path2: None,
+            status: None,
         });
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
@@ -287,6 +361,7 @@ mod tests {
             final_url: "",
             path1: None,
             path2: None,
+            status: None,
         });
         assert!(result.is_ok());
     }

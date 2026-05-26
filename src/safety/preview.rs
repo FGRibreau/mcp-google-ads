@@ -5,6 +5,32 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::models::{AdStatus, NextActionHint};
+
+/// Discriminator that tells `confirm_and_apply` how to dispatch this plan.
+///
+/// - `MutateOperations` (default) -> POST `/v23/customers/{cid}/googleAds:mutate`
+/// - `ApplyRecommendation` -> POST `/v23/customers/{cid}/recommendations:apply`
+/// - `DismissRecommendation` -> POST `/v23/customers/{cid}/recommendations:dismiss`
+///
+/// The recommendation variants exist because `applyRecommendationOperation` and
+/// `dismissRecommendationOperation` are NOT valid `MutateOperation` keys in
+/// Google Ads v23 — they live on dedicated RPCs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanDispatch {
+    #[default]
+    MutateOperations,
+    ApplyRecommendation {
+        /// Full resource name(s): `customers/{cid}/recommendations/{rec_id}`.
+        resource_names: Vec<String>,
+    },
+    DismissRecommendation {
+        /// Full resource name(s): `customers/{cid}/recommendations/{rec_id}`.
+        resource_names: Vec<String>,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChangePlan {
     pub plan_id: String,
@@ -15,8 +41,23 @@ pub struct ChangePlan {
     pub changes: serde_json::Value,
     pub created_at: String,
     pub requires_double_confirm: bool,
-    /// The actual mutate operations to execute (serialized for the API)
+    /// The actual mutate operations to execute (serialized for the API).
+    ///
+    /// Empty for `dispatch != MutateOperations` (recommendation plans route
+    /// through dedicated RPCs and do not use this field).
     pub mutate_operations: Vec<serde_json::Value>,
+    /// Dispatch route for [`crate::tools::confirm::confirm_and_apply`].
+    #[serde(default)]
+    pub dispatch: PlanDispatch,
+    /// The lifecycle status the entity will hold immediately after a
+    /// successful apply. Surfaced in the response so agents know whether
+    /// they still need to call `enable_entity`.
+    #[serde(default)]
+    pub status_after_apply: Option<AdStatus>,
+    /// Optional MCP next-step hint propagated into the apply response.
+    /// Tells the agent how to continue the workflow with zero UI action.
+    #[serde(default)]
+    pub next_action_hint: Option<NextActionHint>,
 }
 
 impl ChangePlan {
@@ -39,11 +80,33 @@ impl ChangePlan {
             created_at: Utc::now().to_rfc3339(),
             requires_double_confirm,
             mutate_operations,
+            dispatch: PlanDispatch::MutateOperations,
+            status_after_apply: None,
+            next_action_hint: None,
         }
     }
 
+    /// Attach a `status_after_apply` value to the plan (builder-style).
+    pub fn with_status_after_apply(mut self, status: AdStatus) -> Self {
+        self.status_after_apply = Some(status);
+        self
+    }
+
+    /// Attach a [`NextActionHint`] to the plan (builder-style).
+    pub fn with_next_action_hint(mut self, hint: NextActionHint) -> Self {
+        self.next_action_hint = Some(hint);
+        self
+    }
+
+    /// Override the default `MutateOperations` dispatch with a dedicated
+    /// recommendation RPC route.
+    pub fn with_dispatch(mut self, dispatch: PlanDispatch) -> Self {
+        self.dispatch = dispatch;
+        self
+    }
+
     pub fn to_preview(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut preview = serde_json::json!({
             "plan_id": self.plan_id,
             "operation": self.operation,
             "entity_type": self.entity_type,
@@ -56,7 +119,24 @@ impl ChangePlan {
                 "Review the changes above. To apply, call confirm_and_apply with plan_id='{}' and dry_run=false.",
                 self.plan_id
             ),
-        })
+        });
+
+        if let Some(obj) = preview.as_object_mut() {
+            if let Some(status) = self.status_after_apply {
+                obj.insert(
+                    "status_after_apply".to_string(),
+                    serde_json::Value::String(status.as_api_str().to_string()),
+                );
+            }
+            if let Some(ref hint) = self.next_action_hint {
+                obj.insert(
+                    "next_action_hint".to_string(),
+                    serde_json::to_value(hint).unwrap_or(serde_json::Value::Null),
+                );
+            }
+        }
+
+        preview
     }
 }
 
@@ -113,6 +193,9 @@ mod tests {
         assert_eq!(plan.customer_id, "1234567890");
         assert!(!plan.requires_double_confirm);
         assert_eq!(plan.mutate_operations.len(), 1);
+        assert_eq!(plan.dispatch, PlanDispatch::MutateOperations);
+        assert!(plan.status_after_apply.is_none());
+        assert!(plan.next_action_hint.is_none());
     }
 
     #[test]
@@ -155,5 +238,35 @@ mod tests {
         let instructions = preview["instructions"].as_str().unwrap_or_default();
         assert!(instructions.contains(&plan.plan_id));
         assert!(instructions.contains("confirm_and_apply"));
+    }
+
+    #[test]
+    fn test_to_preview_with_status_and_hint() {
+        let plan = make_plan()
+            .with_status_after_apply(AdStatus::Paused)
+            .with_next_action_hint(NextActionHint::enable_ad("AG1", "AD1"));
+        let preview = plan.to_preview();
+        assert_eq!(preview["status_after_apply"], "PAUSED");
+        assert_eq!(preview["next_action_hint"]["tool"], "enable_entity");
+        assert_eq!(
+            preview["next_action_hint"]["params"]["entity_id"],
+            "AG1~AD1"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_default_and_override() {
+        let plan = make_plan();
+        assert_eq!(plan.dispatch, PlanDispatch::MutateOperations);
+
+        let plan = make_plan().with_dispatch(PlanDispatch::DismissRecommendation {
+            resource_names: vec!["customers/123/recommendations/rec-1".to_string()],
+        });
+        match plan.dispatch {
+            PlanDispatch::DismissRecommendation { resource_names } => {
+                assert_eq!(resource_names.len(), 1);
+            }
+            _ => panic!("expected DismissRecommendation"),
+        }
     }
 }

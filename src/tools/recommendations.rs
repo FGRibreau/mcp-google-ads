@@ -4,7 +4,7 @@ use crate::client::GoogleAdsClient;
 use crate::config::Config;
 use crate::error::Result;
 use crate::safety::guards::check_blocked_operation;
-use crate::safety::preview::{store_plan, ChangePlan};
+use crate::safety::preview::{store_plan, ChangePlan, PlanDispatch};
 
 /// List active (non-dismissed) recommendations for a customer account.
 ///
@@ -33,6 +33,11 @@ pub async fn list_recommendations(client: &GoogleAdsClient, customer_id: &str) -
 /// Apply a recommendation.
 ///
 /// Returns a ChangePlan preview that must be confirmed via `confirm_and_apply`.
+///
+/// The plan carries [`PlanDispatch::ApplyRecommendation`] so the apply step
+/// routes to the dedicated `recommendations:apply` RPC — NOT to
+/// `googleAds:mutate`, which does not accept `applyRecommendationOperation`
+/// as a valid `MutateOperation` key in v23.
 pub fn apply_recommendation(
     config: &Config,
     customer_id: &str,
@@ -43,15 +48,10 @@ pub fn apply_recommendation(
     let cid = GoogleAdsClient::normalize_customer_id(customer_id);
     let resource_name = format!("customers/{}/recommendations/{}", cid, recommendation_id);
 
-    let operation = json!({
-        "applyRecommendationOperation": {
-            "resourceName": resource_name
-        }
-    });
-
     let changes = json!({
         "recommendation_id": recommendation_id,
-        "action": "APPLY"
+        "action": "APPLY",
+        "resource_name": resource_name,
     });
 
     let plan = ChangePlan::new(
@@ -61,8 +61,11 @@ pub fn apply_recommendation(
         cid,
         changes,
         false,
-        vec![operation],
-    );
+        Vec::new(),
+    )
+    .with_dispatch(PlanDispatch::ApplyRecommendation {
+        resource_names: vec![resource_name],
+    });
 
     let preview = plan.to_preview();
     store_plan(plan);
@@ -72,6 +75,11 @@ pub fn apply_recommendation(
 /// Dismiss a recommendation.
 ///
 /// Returns a ChangePlan preview that must be confirmed via `confirm_and_apply`.
+///
+/// The plan carries [`PlanDispatch::DismissRecommendation`] so the apply step
+/// routes to the dedicated `recommendations:dismiss` RPC. v23 has no
+/// `dismissRecommendationOperation` key on `MutateOperation` — routing it
+/// through `googleAds:mutate` returns 400.
 pub fn dismiss_recommendation(
     config: &Config,
     customer_id: &str,
@@ -82,15 +90,10 @@ pub fn dismiss_recommendation(
     let cid = GoogleAdsClient::normalize_customer_id(customer_id);
     let resource_name = format!("customers/{}/recommendations/{}", cid, recommendation_id);
 
-    let operation = json!({
-        "dismissRecommendationOperation": {
-            "resourceName": resource_name
-        }
-    });
-
     let changes = json!({
         "recommendation_id": recommendation_id,
-        "action": "DISMISS"
+        "action": "DISMISS",
+        "resource_name": resource_name,
     });
 
     let plan = ChangePlan::new(
@@ -100,8 +103,11 @@ pub fn dismiss_recommendation(
         cid,
         changes,
         false,
-        vec![operation],
-    );
+        Vec::new(),
+    )
+    .with_dispatch(PlanDispatch::DismissRecommendation {
+        resource_names: vec![resource_name],
+    });
 
     let preview = plan.to_preview();
     store_plan(plan);
@@ -112,6 +118,7 @@ pub fn dismiss_recommendation(
 mod tests {
     use super::*;
     use crate::config::Config;
+    use crate::safety::preview::get_plan;
 
     #[test]
     fn test_apply_recommendation_success() {
@@ -121,6 +128,24 @@ mod tests {
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "apply_recommendation");
         assert_eq!(preview["status"], "PENDING_CONFIRMATION");
+    }
+
+    #[test]
+    fn test_apply_recommendation_uses_dedicated_dispatch() {
+        let config = Config::default();
+        let preview = apply_recommendation(&config, "123-456-7890", "rec-d1").unwrap();
+        let plan_id = preview["plan_id"].as_str().unwrap();
+        let plan = get_plan(plan_id).unwrap();
+        match plan.dispatch {
+            PlanDispatch::ApplyRecommendation { resource_names } => {
+                assert_eq!(resource_names.len(), 1);
+                assert!(resource_names[0].ends_with("/recommendations/rec-d1"));
+            }
+            other => panic!("expected ApplyRecommendation dispatch, got {:?}", other),
+        }
+        // The mutate_operations list MUST be empty so a bug doesn't accidentally
+        // route a recommendation op through googleAds:mutate.
+        assert!(plan.mutate_operations.is_empty());
     }
 
     #[test]
@@ -138,6 +163,22 @@ mod tests {
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "dismiss_recommendation");
+    }
+
+    #[test]
+    fn test_dismiss_recommendation_uses_dedicated_dispatch() {
+        let config = Config::default();
+        let preview = dismiss_recommendation(&config, "123-456-7890", "rec-d2").unwrap();
+        let plan_id = preview["plan_id"].as_str().unwrap();
+        let plan = get_plan(plan_id).unwrap();
+        match plan.dispatch {
+            PlanDispatch::DismissRecommendation { resource_names } => {
+                assert_eq!(resource_names.len(), 1);
+                assert!(resource_names[0].ends_with("/recommendations/rec-d2"));
+            }
+            other => panic!("expected DismissRecommendation dispatch, got {:?}", other),
+        }
+        assert!(plan.mutate_operations.is_empty());
     }
 
     #[test]
