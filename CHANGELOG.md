@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0] - 2026-05-26
 
+The rationale behind the decisions in this release is recorded in
+[`docs/decisions/0001-v0.3.0-fix-strategy.md`](docs/decisions/0001-v0.3.0-fix-strategy.md).
+
 ### Changed (BREAKING)
 
 - `tools::ads_write::DraftRsaParams` now carries a `status: Option<AdStatus>`
