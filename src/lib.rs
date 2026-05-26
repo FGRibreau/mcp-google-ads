@@ -88,6 +88,9 @@ pub struct DraftCampaignToolParams {
     pub geo_target_ids: Vec<String>,
     /// Language IDs for campaign targeting.
     pub language_ids: Vec<String>,
+    /// Lifecycle status for the new campaign + ad group. Defaults to `PAUSED`
+    /// for safety; pass `ENABLED` to start serving immediately.
+    pub status: Option<models::AdStatus>,
 }
 
 /// Parameters for updating an existing campaign.
@@ -128,6 +131,10 @@ pub struct DraftRsaToolParams {
     pub path1: Option<String>,
     /// Display URL path 2.
     pub path2: Option<String>,
+    /// Lifecycle status for the new ad. One of `ENABLED`, `PAUSED`, `REMOVED`.
+    /// Defaults to `PAUSED` for safety — the response will include a
+    /// `next_action_hint` describing how to call `enable_entity` via MCP.
+    pub status: Option<models::AdStatus>,
 }
 
 /// Parameters for drafting keyword additions.
@@ -207,6 +214,13 @@ pub struct ConfirmApplyParams {
     pub plan_id: String,
     /// If true (default), returns a preview without executing. Set to false to apply changes.
     pub dry_run: Option<bool>,
+    /// One-shot opt out of the `require_dry_run` safety guard for THIS apply.
+    /// Defaults to `false`. Does NOT mutate the global config. Use this only
+    /// when you explicitly know you want to apply without a prior dry-run.
+    pub bypass_require_dry_run: Option<bool>,
+    /// Acknowledgement for plans flagged `requires_double_confirm`. Without
+    /// `confirmed_twice=true`, those plans return an error and do nothing.
+    pub confirmed_twice: Option<bool>,
 }
 
 /// Parameters for creating a new ad group.
@@ -220,6 +234,9 @@ pub struct CreateAdGroupToolParams {
     pub ad_group_name: String,
     /// Optional CPC bid in micros (1 dollar = 1_000_000 micros).
     pub cpc_bid_micros: Option<i64>,
+    /// Lifecycle status. Defaults to `PAUSED` for safety (was `ENABLED` in
+    /// v0.2.x — corrected for consistency with the other write tools).
+    pub status: Option<models::AdStatus>,
 }
 
 /// Parameters for updating an ad group.
@@ -472,12 +489,14 @@ impl GoogleAdsMcp {
         .await
     }
 
-    #[tool(description = "Get detailed information about a Google Ads account (currency, timezone, status).")]
+    #[tool(
+        description = "Get detailed information about a Google Ads account (currency, timezone, status)."
+    )]
     async fn get_account_info(&self, Parameters(params): Parameters<CustomerIdParams>) -> String {
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
-        self.run_tool(|client| async move {
-            tools::accounts::get_account_info(&client, &cid).await
-        })
+        self.run_tool(
+            |client| async move { tools::accounts::get_account_info(&client, &cid).await },
+        )
         .await
     }
 
@@ -564,14 +583,11 @@ impl GoogleAdsMcp {
     #[tool(
         description = "List campaign-level extensions (sitelinks, callouts, structured snippets). Returns up to 500 non-removed extensions."
     )]
-    async fn list_extensions(
-        &self,
-        Parameters(params): Parameters<CustomerIdParams>,
-    ) -> String {
+    async fn list_extensions(&self, Parameters(params): Parameters<CustomerIdParams>) -> String {
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
-        self.run_tool(|client| async move {
-            tools::extensions::list_extensions(&client, &cid).await
-        })
+        self.run_tool(
+            |client| async move { tools::extensions::list_extensions(&client, &cid).await },
+        )
         .await
     }
 
@@ -619,27 +635,50 @@ impl GoogleAdsMcp {
 
     // ── Ad Groups (write) ────────────────────────────────────────────────
 
-    #[tool(description = "Draft a new ad group in an existing campaign. Returns a preview — call confirm_and_apply to execute.")]
-    async fn create_ad_group(&self, Parameters(params): Parameters<CreateAdGroupToolParams>) -> String {
+    #[tool(
+        description = "Draft a new ad group in an existing campaign. Defaults to PAUSED — pass status='ENABLED' to start serving immediately. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn create_ad_group(
+        &self,
+        Parameters(params): Parameters<CreateAdGroupToolParams>,
+    ) -> String {
         if let Some(err) = self.check_write_allowed() {
             return err;
         }
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         let config = self.config.clone();
-        match tools::ad_groups_write::create_ad_group(&config, &cid, &params.campaign_id, &params.ad_group_name, params.cpc_bid_micros) {
+        match tools::ad_groups_write::create_ad_group(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.ad_group_name,
+            params.cpc_bid_micros,
+            params.status,
+        ) {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }
 
-    #[tool(description = "Draft ad group updates (name, CPC bid). Returns a preview — call confirm_and_apply to execute.")]
-    async fn update_ad_group(&self, Parameters(params): Parameters<UpdateAdGroupToolParams>) -> String {
+    #[tool(
+        description = "Draft ad group updates (name, CPC bid). Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn update_ad_group(
+        &self,
+        Parameters(params): Parameters<UpdateAdGroupToolParams>,
+    ) -> String {
         if let Some(err) = self.check_write_allowed() {
             return err;
         }
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         let config = self.config.clone();
-        match tools::ad_groups_write::update_ad_group(&config, &cid, &params.ad_group_id, params.name.as_deref(), params.cpc_bid_micros) {
+        match tools::ad_groups_write::update_ad_group(
+            &config,
+            &cid,
+            &params.ad_group_id,
+            params.name.as_deref(),
+            params.cpc_bid_micros,
+        ) {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
@@ -680,6 +719,7 @@ impl GoogleAdsMcp {
             keywords,
             geo_target_ids: params.geo_target_ids,
             language_ids: params.language_ids,
+            status: params.status,
         }) {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
@@ -739,6 +779,7 @@ impl GoogleAdsMcp {
             final_url: &params.final_url,
             path1: params.path1.as_deref(),
             path2: params.path2.as_deref(),
+            status: params.status,
         }) {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
@@ -1249,15 +1290,10 @@ impl GoogleAdsMcp {
     // ── Policy ─────────────────────────────────────────────────────────
 
     #[tool(description = "Get policy issues for ads (disapproved, limited, under review).")]
-    async fn get_policy_issues(
-        &self,
-        Parameters(params): Parameters<CustomerIdParams>,
-    ) -> String {
+    async fn get_policy_issues(&self, Parameters(params): Parameters<CustomerIdParams>) -> String {
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
-        self.run_tool(|client| async move {
-            tools::policy::get_policy_issues(&client, &cid).await
-        })
-        .await
+        self.run_tool(|client| async move { tools::policy::get_policy_issues(&client, &cid).await })
+            .await
     }
 
     // ── Conversions ────────────────────────────────────────────────────
@@ -1334,7 +1370,7 @@ impl GoogleAdsMcp {
     // ── Confirm & Apply ─────────────────────────────────────────────────
 
     #[tool(
-        description = "Execute a previously previewed change. IMPORTANT: defaults to dry_run=true. Set dry_run=false to make real changes."
+        description = "Execute a previously previewed change. IMPORTANT: defaults to dry_run=true. Set dry_run=false to make real changes. If config.safety.require_dry_run is true, dry_run=false will be rejected unless bypass_require_dry_run=true is also set."
     )]
     async fn confirm_and_apply(
         &self,
@@ -1346,7 +1382,14 @@ impl GoogleAdsMcp {
         let config = self.config.clone();
         let dry_run = params.dry_run.unwrap_or(true);
 
-        match tools::confirm::confirm_and_apply(&config, &params.plan_id, dry_run).await {
+        let input = tools::confirm::ConfirmApplyInput {
+            plan_id: params.plan_id,
+            dry_run,
+            bypass_require_dry_run: params.bypass_require_dry_run.unwrap_or(false),
+            confirmed_twice: params.confirmed_twice.unwrap_or(false),
+        };
+
+        match tools::confirm::confirm_and_apply(&config, input).await {
             Ok(result) => result.to_string(),
             Err(e) => {
                 let hint = gaql::get_error_hint(&e.to_string())
@@ -1424,9 +1467,7 @@ impl GoogleAdsMcp {
         let ag_id = parsed["results"][0]["adGroup"]["id"]
             .as_str()
             .ok_or_else(|| {
-                format!(
-                    "no ad_group found for ad_id={ad_id} (does the ad exist in this customer?)"
-                )
+                format!("no ad_group found for ad_id={ad_id} (does the ad exist in this customer?)")
             })?;
         Ok(format!("{}~{}", ag_id, ad_id))
     }

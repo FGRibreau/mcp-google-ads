@@ -74,9 +74,7 @@ fn test_client() -> GoogleAdsClient {
 }
 
 fn test_customer_id() -> String {
-    GoogleAdsClient::normalize_customer_id(
-        &std::env::var("GOOGLE_ADS_TEST_CUSTOMER_ID").unwrap(),
-    )
+    GoogleAdsClient::normalize_customer_id(&std::env::var("GOOGLE_ADS_TEST_CUSTOMER_ID").unwrap())
 }
 
 // ── Connection ──────────────────────────────────────────────────────────
@@ -243,6 +241,7 @@ async fn test_draft_campaign_dry_run() {
             keywords: vec![],
             geo_target_ids: vec!["2250".to_string()], // France
             language_ids: vec!["1002".to_string()],   // French
+            status: None,
         },
     );
 
@@ -259,8 +258,16 @@ async fn test_draft_campaign_dry_run() {
 
     // Confirm with dry_run=true (should NOT create anything)
     let plan_id = preview_obj["plan_id"].as_str().unwrap();
-    let dry_result =
-        mcp_google_ads::tools::confirm::confirm_and_apply(&config, plan_id, true).await;
+    let dry_result = mcp_google_ads::tools::confirm::confirm_and_apply(
+        &config,
+        mcp_google_ads::tools::confirm::ConfirmApplyInput {
+            plan_id: plan_id.to_string(),
+            dry_run: true,
+            bypass_require_dry_run: false,
+            confirmed_twice: false,
+        },
+    )
+    .await;
 
     assert!(
         dry_result.is_ok(),
@@ -297,6 +304,7 @@ async fn test_draft_rsa_preview() {
             final_url: "https://example.com",
             path1: Some("test"),
             path2: None,
+            status: None,
         },
     );
 
@@ -330,10 +338,14 @@ async fn test_budget_cap_blocks_excessive_budget() {
             keywords: vec![],
             geo_target_ids: vec!["2250".to_string()],
             language_ids: vec!["1002".to_string()],
+            status: None,
         },
     );
 
-    assert!(result.is_err(), "Expected budget cap to block this campaign");
+    assert!(
+        result.is_err(),
+        "Expected budget cap to block this campaign"
+    );
     let err = result.err().unwrap().to_string();
     assert!(
         err.contains("exceeds maximum"),

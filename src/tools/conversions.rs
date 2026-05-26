@@ -2,10 +2,7 @@ use crate::client::GoogleAdsClient;
 use crate::error::Result;
 
 /// List all conversion actions configured in the account.
-pub async fn get_conversion_actions(
-    client: &GoogleAdsClient,
-    customer_id: &str,
-) -> Result<String> {
+pub async fn get_conversion_actions(client: &GoogleAdsClient, customer_id: &str) -> Result<String> {
     let query = "\
         SELECT \
             conversion_action.id, \
