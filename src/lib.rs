@@ -250,6 +250,9 @@ pub struct UpdateAdGroupToolParams {
     pub name: Option<String>,
     /// New CPC bid in micros.
     pub cpc_bid_micros: Option<i64>,
+    /// Ad rotation mode: OPTIMIZE (serve best-performing ad) or
+    /// ROTATE_FOREVER ("Rotate indefinitely" in the Google Ads UI).
+    pub ad_rotation_mode: Option<models::AdRotationMode>,
 }
 
 /// Parameters for keyword discovery.
@@ -661,7 +664,7 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Draft ad group updates (name, CPC bid). Returns a preview — call confirm_and_apply to execute."
+        description = "Draft ad group updates (name, CPC bid, ad rotation mode). ad_rotation_mode=ROTATE_FOREVER is 'Rotate indefinitely' in the UI. Returns a preview — call confirm_and_apply to execute."
     )]
     async fn update_ad_group(
         &self,
@@ -678,6 +681,7 @@ impl GoogleAdsMcp {
             &params.ad_group_id,
             params.name.as_deref(),
             params.cpc_bid_micros,
+            params.ad_rotation_mode,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
