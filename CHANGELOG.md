@@ -5,6 +5,26 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-12
+
+### Added
+
+- `models::AdRotationMode` enum (`OPTIMIZE`, `ROTATE_FOREVER`) with serde
+  rename `"SCREAMING_SNAKE_CASE"`, matching the Google Ads REST API
+  `AdGroup.ad_rotation_mode` enum values.
+- `update_ad_group` accepts an optional `ad_rotation_mode` parameter and
+  writes `adRotationMode` (with the matching update-mask entry) on the
+  drafted `adGroupOperation`. `ROTATE_FOREVER` is what the Google Ads UI
+  calls "Rotate indefinitely". Previously ad rotation could only be
+  changed through the UI.
+
+### Changed (BREAKING)
+
+- `tools::ad_groups_write::update_ad_group` signature gains a trailing
+  `ad_rotation_mode: Option<AdRotationMode>` argument. Existing callers
+  must pass `None` to keep the previous behaviour. The "at least one
+  field" validation message now lists `ad_rotation_mode`.
+
 ## [0.3.0] - 2026-05-26
 
 The rationale behind the decisions in this release is recorded in

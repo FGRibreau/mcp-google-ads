@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::error::{McpGoogleAdsError, Result};
-use crate::models::{AdStatus, NextActionHint};
+use crate::models::{AdRotationMode, AdStatus, NextActionHint};
 use crate::safety::guards::check_blocked_operation;
 use crate::safety::preview::{store_plan, ChangePlan};
 
@@ -81,9 +81,11 @@ pub fn create_ad_group(
     Ok(preview)
 }
 
-/// Draft updating an existing ad group (name and/or CPC bid).
+/// Draft updating an existing ad group (name, CPC bid, and/or ad rotation mode).
 ///
-/// At least one of `name` or `cpc_bid_micros` must be provided.
+/// At least one of `name`, `cpc_bid_micros` or `ad_rotation_mode` must be
+/// provided. `ad_rotation_mode: ROTATE_FOREVER` is what the Google Ads UI
+/// calls "Rotate indefinitely".
 /// Returns a ChangePlan preview that must be confirmed via `confirm_and_apply`.
 pub fn update_ad_group(
     config: &Config,
@@ -91,12 +93,13 @@ pub fn update_ad_group(
     ad_group_id: &str,
     name: Option<&str>,
     cpc_bid_micros: Option<i64>,
+    ad_rotation_mode: Option<AdRotationMode>,
 ) -> Result<serde_json::Value> {
     check_blocked_operation("update_ad_group", &config.safety)?;
 
-    if name.is_none() && cpc_bid_micros.is_none() {
+    if name.is_none() && cpc_bid_micros.is_none() && ad_rotation_mode.is_none() {
         return Err(McpGoogleAdsError::Validation(
-            "At least one of name or cpc_bid_micros must be provided".to_string(),
+            "At least one of name, cpc_bid_micros or ad_rotation_mode must be provided".to_string(),
         ));
     }
 
@@ -114,6 +117,10 @@ pub fn update_ad_group(
         ad_group["cpcBidMicros"] = json!(bid.to_string());
         update_mask_fields.push("cpcBidMicros");
     }
+    if let Some(rotation) = ad_rotation_mode {
+        ad_group["adRotationMode"] = json!(rotation.as_api_str());
+        update_mask_fields.push("adRotationMode");
+    }
 
     let operation = json!({
         "adGroupOperation": {
@@ -126,6 +133,7 @@ pub fn update_ad_group(
         "ad_group_id": ad_group_id,
         "name": name,
         "cpc_bid_micros": cpc_bid_micros,
+        "ad_rotation_mode": ad_rotation_mode.map(|r| r.as_api_str()),
     });
 
     let plan = ChangePlan::new(
@@ -230,7 +238,7 @@ mod tests {
     #[test]
     fn test_update_ad_group_name_only() {
         let config = Config::default();
-        let result = update_ad_group(&config, "123-456-7890", "555", Some("New Name"), None);
+        let result = update_ad_group(&config, "123-456-7890", "555", Some("New Name"), None, None);
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "update_ad_group");
@@ -241,7 +249,7 @@ mod tests {
     #[test]
     fn test_update_ad_group_bid_only() {
         let config = Config::default();
-        let result = update_ad_group(&config, "123-456-7890", "555", None, Some(3_000_000));
+        let result = update_ad_group(&config, "123-456-7890", "555", None, Some(3_000_000), None);
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "update_ad_group");
@@ -257,6 +265,7 @@ mod tests {
             "555",
             Some("Updated"),
             Some(1_500_000),
+            None,
         );
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
@@ -265,19 +274,38 @@ mod tests {
     }
 
     #[test]
+    fn test_update_ad_group_rotation_only() {
+        let config = Config::default();
+        let result = update_ad_group(
+            &config,
+            "123-456-7890",
+            "555",
+            None,
+            None,
+            Some(AdRotationMode::RotateForever),
+        );
+        assert!(result.is_ok());
+        let preview = result.ok().unwrap_or_default();
+        assert_eq!(preview["operation"], "update_ad_group");
+        assert_eq!(preview["changes"]["ad_rotation_mode"], "ROTATE_FOREVER");
+        assert!(preview["changes"]["name"].is_null());
+        assert!(preview["changes"]["cpc_bid_micros"].is_null());
+    }
+
+    #[test]
     fn test_update_ad_group_no_fields() {
         let config = Config::default();
-        let result = update_ad_group(&config, "123-456-7890", "555", None, None);
+        let result = update_ad_group(&config, "123-456-7890", "555", None, None, None);
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(err.contains("At least one of name or cpc_bid_micros must be provided"));
+        assert!(err.contains("At least one of name, cpc_bid_micros or ad_rotation_mode"));
     }
 
     #[test]
     fn test_update_ad_group_blocked() {
         let mut config = Config::default();
         config.safety.blocked_operations = vec!["update_ad_group".to_string()];
-        let result = update_ad_group(&config, "123-456-7890", "555", Some("Test"), None);
+        let result = update_ad_group(&config, "123-456-7890", "555", Some("Test"), None, None);
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("blocked"));
