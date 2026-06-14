@@ -80,6 +80,7 @@ fn test_customer_id() -> String {
 // ── Connection ──────────────────────────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "requires live Google Ads test credentials (GOOGLE_ADS_TEST_*); run with: cargo test -- --ignored"]
 async fn test_connection_and_auth() {
     let client = test_client();
     let cid = test_customer_id();
@@ -104,6 +105,7 @@ async fn test_connection_and_auth() {
 // ── Read: Campaigns ─────────────────────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "requires live Google Ads test credentials (GOOGLE_ADS_TEST_*); run with: cargo test -- --ignored"]
 async fn test_list_campaigns() {
     let client = test_client();
     let cid = test_customer_id();
@@ -129,6 +131,7 @@ async fn test_list_campaigns() {
 // ── Read: Keywords ──────────────────────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "requires live Google Ads test credentials (GOOGLE_ADS_TEST_*); run with: cargo test -- --ignored"]
 async fn test_list_keywords() {
     let client = test_client();
     let cid = test_customer_id();
@@ -153,6 +156,7 @@ async fn test_list_keywords() {
 // ── Read: Geo targets ───────────────────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "requires live Google Ads test credentials (GOOGLE_ADS_TEST_*); run with: cargo test -- --ignored"]
 async fn test_search_geo_targets() {
     let client = test_client();
     let cid = test_customer_id();
@@ -185,6 +189,7 @@ async fn test_search_geo_targets() {
 // ── Read: Account hierarchy (if MCC) ────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "requires live Google Ads test credentials (GOOGLE_ADS_TEST_*); run with: cargo test -- --ignored"]
 async fn test_list_accounts() {
     let config = test_config();
     let client = GoogleAdsClient::new(&config).expect("Failed to create client");
@@ -222,6 +227,7 @@ async fn test_list_accounts() {
 // ── Write: Campaign CRUD (draft → confirm dry_run → cleanup) ────────────
 
 #[tokio::test]
+#[ignore = "requires live Google Ads test credentials (GOOGLE_ADS_TEST_*); run with: cargo test -- --ignored"]
 async fn test_draft_campaign_dry_run() {
     let config = test_config();
     let cid = GoogleAdsClient::normalize_customer_id(&config.ads.customer_id);
@@ -283,6 +289,7 @@ async fn test_draft_campaign_dry_run() {
 // ── Write: RSA draft (dry run only) ─────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "requires live Google Ads test credentials (GOOGLE_ADS_TEST_*); run with: cargo test -- --ignored"]
 async fn test_draft_rsa_preview() {
     let config = test_config();
     let cid = GoogleAdsClient::normalize_customer_id(&config.ads.customer_id);
@@ -319,6 +326,7 @@ async fn test_draft_rsa_preview() {
 // ── Safety: Budget cap enforcement ──────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "requires live Google Ads test credentials (GOOGLE_ADS_TEST_*); run with: cargo test -- --ignored"]
 async fn test_budget_cap_blocks_excessive_budget() {
     let mut config = test_config();
     config.safety.max_daily_budget = 5.0; // Low cap for testing
@@ -357,6 +365,7 @@ async fn test_budget_cap_blocks_excessive_budget() {
 // ── Safety: Read-only mode ──────────────────────────────────────────────
 
 #[test]
+#[ignore = "requires live Google Ads test credentials (GOOGLE_ADS_TEST_*); run with: cargo test -- --ignored"]
 fn test_read_only_config() {
     let mut config = test_config();
     config.read_only = true;
@@ -368,6 +377,7 @@ fn test_read_only_config() {
 // ── GAQL error handling ─────────────────────────────────────────────────
 
 #[tokio::test]
+#[ignore = "requires live Google Ads test credentials (GOOGLE_ADS_TEST_*); run with: cargo test -- --ignored"]
 async fn test_invalid_gaql_returns_error() {
     let client = test_client();
     let cid = test_customer_id();
