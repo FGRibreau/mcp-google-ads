@@ -743,6 +743,28 @@ impl GoogleAdsMcp {
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         let config = self.config.clone();
 
+        // A daily-budget update targets the campaign's budget resource, which has
+        // its own ID distinct from the campaign ID. Resolve it via the API first
+        // so the mutate hits the real budget (issue #5).
+        let budget_resource_name: Option<String> = if params.daily_budget.is_some() {
+            let client = match GoogleAdsClient::new(&config) {
+                Ok(c) => c,
+                Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
+            };
+            match tools::campaigns_write::resolve_campaign_budget_resource(
+                &client,
+                &cid,
+                &params.campaign_id,
+            )
+            .await
+            {
+                Ok(rn) => Some(rn),
+                Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
+            }
+        } else {
+            None
+        };
+
         match tools::campaigns_write::update_campaign(
             &tools::campaigns_write::UpdateCampaignParams {
                 config: &config,
@@ -752,6 +774,7 @@ impl GoogleAdsMcp {
                 target_cpa: params.target_cpa,
                 target_roas: params.target_roas,
                 daily_budget: params.daily_budget,
+                budget_resource_name: budget_resource_name.as_deref(),
                 geo_target_ids: params.geo_target_ids.unwrap_or_default(),
                 language_ids: params.language_ids.unwrap_or_default(),
             },

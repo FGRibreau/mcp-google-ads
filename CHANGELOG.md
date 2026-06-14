@@ -5,6 +5,36 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-06-14
+
+### Fixed
+
+- `update_campaign` now resolves the campaign's real budget resource before a
+  `daily_budget` update. Previously it reused the campaign ID as the budget ID
+  (`campaignBudgets/{campaign_id}`), which targets a non-existent budget and
+  fails with `RESOURCE_NOT_FOUND` — campaign budgets have their own distinct
+  IDs. The resource name is resolved via
+  `SELECT campaign.campaign_budget FROM campaign WHERE campaign.id = {id}`.
+- `confirm_and_apply` now reports a `partialFailureError` (HTTP 200 with an
+  embedded Google Ads error, e.g. code 3) as a failure instead of a false
+  `"APPLIED"`. The audit log records `FAILED` and the plan is retained for
+  retry. Affects both the mutate and apply-recommendation dispatch paths.
+  Previously the partial failure was attached as metadata while the operation
+  was reported as successful, masking the failure from callers.
+
+### Added
+
+- `tools::campaigns_write::resolve_campaign_budget_resource` — resolves a
+  campaign's budget resource name via the API.
+- `error::McpGoogleAdsError::PartialFailure` — carries the Google Ads
+  `partialFailureError` payload so the underlying reason is visible to callers.
+
+### Changed (BREAKING)
+
+- `tools::campaigns_write::UpdateCampaignParams` gains a
+  `budget_resource_name: Option<&str>` field, required when `daily_budget` is
+  set. Existing callers must pass `None` (or a resolved resource name).
+
 ## [0.4.0] - 2026-06-12
 
 ### Added

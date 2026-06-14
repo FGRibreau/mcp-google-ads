@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::client::GoogleAdsClient;
 use crate::config::Config;
 use crate::error::Result;
 use crate::models::{AdStatus, NextActionHint};
@@ -206,6 +207,12 @@ pub struct UpdateCampaignParams<'a> {
     pub target_cpa: Option<f64>,
     pub target_roas: Option<f64>,
     pub daily_budget: Option<f64>,
+    /// Full resource name of the campaign's budget
+    /// (`customers/{cid}/campaignBudgets/{budgetId}`). Required when
+    /// `daily_budget` is set — campaign budgets have their own IDs, distinct
+    /// from the campaign ID, so the caller must resolve it first via
+    /// [`resolve_campaign_budget_resource`].
+    pub budget_resource_name: Option<&'a str>,
     pub geo_target_ids: Vec<String>,
     pub language_ids: Vec<String>,
 }
@@ -222,18 +229,26 @@ pub fn update_campaign(params: &UpdateCampaignParams) -> Result<serde_json::Valu
     // Budget update
     if let Some(budget) = params.daily_budget {
         check_budget_cap(budget, &params.config.safety)?;
+
+        // A campaign budget has its own resource ID, distinct from the campaign
+        // ID. The caller must resolve it (via `resolve_campaign_budget_resource`)
+        // and pass it in — reusing the campaign ID here would target a
+        // non-existent budget and fail with RESOURCE_NOT_FOUND.
+        let budget_resource = params.budget_resource_name.ok_or_else(|| {
+            crate::error::McpGoogleAdsError::Validation(
+                "daily_budget update requires the campaign's budget resource name; \
+                 resolve it first via resolve_campaign_budget_resource"
+                    .to_string(),
+            )
+        })?;
+
         changes.insert("daily_budget".to_string(), json!(budget));
-        // Budget update requires knowing the budget resource name.
-        // We build a partial update — the campaign's budget resource is
-        // customers/{cid}/campaignBudgets/{budgetId}. Since we don't have the
-        // budget ID here, we use the campaign resource to reference it.
-        // In practice the caller should provide the budget resource name,
-        // but for simplicity we document that budget updates go through the
-        // campaign budget resource directly.
+        // Note: campaign budgets can be shared across campaigns; updating the
+        // amount affects every campaign that uses this budget.
         operations.push(json!({
             "campaignBudgetOperation": {
                 "update": {
-                    "resourceName": format!("customers/{}/campaignBudgets/{}", cid, params.campaign_id),
+                    "resourceName": budget_resource,
                     "amountMicros": dollars_to_micros(budget).to_string()
                 },
                 "updateMask": "amountMicros"
@@ -332,6 +347,37 @@ pub fn update_campaign(params: &UpdateCampaignParams) -> Result<serde_json::Valu
     let preview = plan.to_preview();
     store_plan(plan);
     Ok(preview)
+}
+
+/// Resolve a campaign's budget resource name by querying its `campaign_budget`.
+///
+/// Campaign budgets have their own resource IDs, distinct from the campaign ID,
+/// so a daily-budget update must target the real budget resource. Runs
+/// `SELECT campaign.campaign_budget FROM campaign WHERE campaign.id = {id}`
+/// and returns the `customers/{cid}/campaignBudgets/{budgetId}` resource name.
+pub async fn resolve_campaign_budget_resource(
+    client: &GoogleAdsClient,
+    customer_id: &str,
+    campaign_id: &str,
+) -> Result<String> {
+    let query = format!(
+        "SELECT campaign.campaign_budget FROM campaign WHERE campaign.id = {}",
+        campaign_id
+    );
+    let rows = client.search(customer_id, &query).await?;
+
+    rows.first()
+        .and_then(|row| row.get("campaign"))
+        .and_then(|c| c.get("campaignBudget"))
+        .and_then(|b| b.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            crate::error::McpGoogleAdsError::Validation(format!(
+                "Could not resolve a campaign budget for campaign {} — \
+                 the campaign may not exist or has no associated budget",
+                campaign_id
+            ))
+        })
 }
 
 /// Input for a keyword to add during campaign drafting.
@@ -582,6 +628,7 @@ mod tests {
             target_cpa: None,
             target_roas: None,
             daily_budget: None,
+            budget_resource_name: None,
             geo_target_ids: vec![],
             language_ids: vec![],
         });
@@ -603,6 +650,7 @@ mod tests {
             target_cpa: None,
             target_roas: None,
             daily_budget: Some(25.0),
+            budget_resource_name: Some("customers/1234567890/campaignBudgets/987654321"),
             geo_target_ids: vec![],
             language_ids: vec![],
         });
@@ -610,6 +658,48 @@ mod tests {
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "update_campaign");
+
+        // The budget operation must target the resolved budget resource — NOT a
+        // resource built from the campaign ID (issue #5 regression guard).
+        let plan_id = preview["plan_id"].as_str().unwrap_or_default();
+        let plan = crate::safety::preview::get_plan(plan_id).expect("plan stored");
+        let budget_op = plan
+            .mutate_operations
+            .iter()
+            .find(|op| op.get("campaignBudgetOperation").is_some())
+            .expect("budget operation present");
+        let resource_name = budget_op["campaignBudgetOperation"]["update"]["resourceName"]
+            .as_str()
+            .unwrap_or_default();
+        assert_eq!(
+            resource_name,
+            "customers/1234567890/campaignBudgets/987654321"
+        );
+        assert_ne!(resource_name, "customers/1234567890/campaignBudgets/12345");
+    }
+
+    #[test]
+    fn test_update_campaign_budget_requires_resolved_resource_name() {
+        // Setting daily_budget without resolving the budget resource name must
+        // fail loudly instead of silently building a wrong resource (issue #5).
+        let config = Config::default();
+
+        let result = update_campaign(&UpdateCampaignParams {
+            config: &config,
+            customer_id: "123-456-7890",
+            campaign_id: "12345",
+            bidding_strategy: None,
+            target_cpa: None,
+            target_roas: None,
+            daily_budget: Some(25.0),
+            budget_resource_name: None,
+            geo_target_ids: vec![],
+            language_ids: vec![],
+        });
+
+        assert!(result.is_err());
+        let err = result.err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("budget resource name"));
     }
 
     #[test]
@@ -625,6 +715,7 @@ mod tests {
             target_cpa: None,
             target_roas: None,
             daily_budget: Some(20.0), // exceeds cap of 10.0
+            budget_resource_name: Some("customers/1234567890/campaignBudgets/987654321"),
             geo_target_ids: vec![],
             language_ids: vec![],
         });

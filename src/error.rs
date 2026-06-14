@@ -14,6 +14,8 @@ pub enum McpGoogleAdsError {
     },
     #[error("Safety violation: {0}")]
     Safety(String),
+    #[error("Operation failed (partial failure): {0}")]
+    PartialFailure(serde_json::Value),
     #[error("Plan not found: {0}")]
     PlanNotFound(String),
     #[error("Validation error: {0}")]
