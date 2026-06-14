@@ -174,18 +174,18 @@ async fn apply_mutate_operations(
 
     let response = client.mutate(&plan.customer_id, operations).await?;
 
-    let mut result = json!({
-        "status": "APPLIED",
-        "responses": response.mutate_operation_responses,
-    });
-
+    // Google returns HTTP 200 with `partialFailureError` in the body when one or
+    // more operations fail (we request `partialFailure: true`). Treat its presence
+    // as a real failure instead of reporting "APPLIED" — otherwise the failure is
+    // invisible to the caller and the audit log records a false SUCCESS.
     if let Some(partial_error) = response.partial_failure_error {
-        if let Some(o) = result.as_object_mut() {
-            o.insert("partial_failure_error".to_string(), partial_error);
-        }
+        return Err(McpGoogleAdsError::PartialFailure(partial_error));
     }
 
-    Ok(result)
+    Ok(json!({
+        "status": "APPLIED",
+        "responses": response.mutate_operation_responses,
+    }))
 }
 
 async fn apply_recommendation_dispatch(
@@ -197,18 +197,14 @@ async fn apply_recommendation_dispatch(
         .apply_recommendations(&plan.customer_id, resource_names.to_vec())
         .await?;
 
-    let mut result = json!({
-        "status": "APPLIED",
-        "results": response.results,
-    });
-
     if let Some(partial_error) = response.partial_failure_error {
-        if let Some(o) = result.as_object_mut() {
-            o.insert("partial_failure_error".to_string(), partial_error);
-        }
+        return Err(McpGoogleAdsError::PartialFailure(partial_error));
     }
 
-    Ok(result)
+    Ok(json!({
+        "status": "APPLIED",
+        "results": response.results,
+    }))
 }
 
 async fn dismiss_recommendation_dispatch(
