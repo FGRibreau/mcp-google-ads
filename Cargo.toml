@@ -1,6 +1,6 @@
 [package]
 name = "mcp-google-ads"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "MCP server for Google Ads — full campaign management with safety guardrails"
 license = "MIT"
@@ -14,7 +14,7 @@ exclude = ["dogfood-output/", "scripts/", "assets/", ".claude/", ".envrc"]
 
 [dependencies]
 rmcp = { version = "0.16", features = ["server", "transport-io", "macros"] }
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 yup-oauth2 = "12"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
