@@ -5,6 +5,19 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-06-22
+
+### Fixed
+
+- Release workflow now publishes binaries. Two issues prevented any tagged
+  release from producing assets: (1) a tag push creates only the git tag, not a
+  GitHub Release, so `taiki-e/upload-rust-binary-action` failed with "release
+  not found" — a `create-release` job now creates the release before the upload
+  matrix runs; (2) the `aarch64-unknown-linux-gnu` target failed to build
+  (`E0463: can't find crate for core`, std component not installed) and is
+  dropped in favour of `aarch64-unknown-linux-musl`, which builds and is a
+  portable static binary.
+
 ## [0.5.1] - 2026-06-22
 
 ### Fixed
