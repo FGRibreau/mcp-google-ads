@@ -240,15 +240,9 @@ mod tests {
     #[test]
     fn test_empty_name_rejected() {
         let config = Config::default();
-        let err = create_conversion_action(
-            &config,
-            "1234567890",
-            "   ",
-            "SIGNUP",
-            "ONE_PER_CLICK",
-            30,
-        )
-        .expect_err("empty name rejected");
+        let err =
+            create_conversion_action(&config, "1234567890", "   ", "SIGNUP", "ONE_PER_CLICK", 30)
+                .expect_err("empty name rejected");
         assert!(err.to_string().contains("empty"));
     }
 
