@@ -5,6 +5,21 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `create_conversion_action`: draft a conversion action for server-side click
+  uploads (`type = UPLOAD_CLICKS`, gclid-based offline conversion import). Built
+  for creating "Signup"/"Activation" conversions whose gclid is uploaded
+  server-side. Like the other write tools it returns a preview to confirm via
+  `confirm_and_apply`; after apply, the numeric ID (for a
+  `*_CONVERSION_ACTION_ID` env var) is the trailing segment of the returned
+  `conversionAction` resource name. Parameters: `name`, optional `category`
+  (default `SIGNUP`), `counting_type` (default `ONE_PER_CLICK`), and
+  `click_through_lookback_window_days` (1-90, default 30). No value settings are
+  attached, so valueless uploads are accepted.
+
 ## [0.4.1] - 2026-06-14
 
 ### Fixed

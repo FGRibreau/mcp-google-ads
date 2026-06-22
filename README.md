@@ -181,7 +181,7 @@ All configuration is via environment variables. No config files.
 | `get_policy_issues` | Disapproved or limited ads and policy violations |
 | `get_conversion_actions` | Conversion actions configured in the account |
 
-### Write (27 tools)
+### Write (28 tools)
 
 All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` to execute.
 
@@ -204,6 +204,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `create_custom_audience` | Remarketing / customer match audiences |
 | `add_audience_targeting` | Target audiences (TARGETING/OBSERVATION) |
 | `create_portfolio_bidding_strategy` | Portfolio bidding (CPA, ROAS, impression share) |
+| `create_conversion_action` | Create a conversion action for server-side click uploads (UPLOAD_CLICKS, gclid-based) |
 | `update_keyword_bid` | Modify keyword CPC bid |
 | `upload_image_asset` | Upload base64-encoded image |
 | `upload_text_asset` | Create reusable text asset |

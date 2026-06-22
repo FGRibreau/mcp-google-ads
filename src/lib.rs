@@ -196,6 +196,21 @@ pub struct CreateSnippetsToolParams {
     pub values: Vec<String>,
 }
 
+/// Parameters for creating a conversion action for server-side click uploads.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct CreateConversionActionToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Name of the conversion action (e.g. "Activation").
+    pub name: String,
+    /// Conversion category (default "SIGNUP"). E.g. SIGNUP, LEAD, DEFAULT.
+    pub category: Option<String>,
+    /// Counting type (default "ONE_PER_CLICK"). One of ONE_PER_CLICK, MANY_PER_CLICK.
+    pub counting_type: Option<String>,
+    /// Click-through attribution window in days, 1-90 (default 30).
+    pub click_through_lookback_window_days: Option<i64>,
+}
+
 /// Parameters for pausing, enabling, or removing an entity.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct EntityActionParams {
@@ -1335,6 +1350,37 @@ impl GoogleAdsMcp {
             tools::conversions::get_conversion_actions(&client, &cid).await
         })
         .await
+    }
+
+    #[tool(
+        description = "Create a conversion action for server-side click uploads (type UPLOAD_CLICKS, gclid-based offline conversion import). Use this to create a 'Signup' or 'Activation' conversion. Returns a preview — call confirm_and_apply to execute. After apply, the numeric ID (for a *_CONVERSION_ACTION_ID env var) is the trailing segment of the returned conversionAction resourceName."
+    )]
+    async fn create_conversion_action(
+        &self,
+        Parameters(params): Parameters<CreateConversionActionToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        let category = params.category.unwrap_or_else(|| "SIGNUP".to_string());
+        let counting_type = params
+            .counting_type
+            .unwrap_or_else(|| "ONE_PER_CLICK".to_string());
+        let window = params.click_through_lookback_window_days.unwrap_or(30);
+
+        match tools::conversions::create_conversion_action(
+            &config,
+            &cid,
+            &params.name,
+            &category,
+            &counting_type,
+            window,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
     }
 
     // ── Phase 5: Recommendations ────────────────────────────────────────
