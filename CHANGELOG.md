@@ -5,6 +5,17 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-06-22
+
+### Fixed
+
+- Release builds for every target. `reqwest` was declared with the `rustls-tls`
+  feature but kept its default features, which include `default-tls`
+  (native-tls → `openssl-sys`). `openssl-sys` is a C dependency that cannot
+  cross-compile, so the release workflow failed on every non-host target since
+  v0.4.1. Setting `default-features = false` leaves only `rustls-tls` (pure
+  Rust); `openssl-sys` and `native-tls` are removed from the dependency tree.
+
 ## [0.5.0] - 2026-06-22
 
 ### Added
