@@ -161,6 +161,30 @@ pub struct AddNegativeKeywordsToolParams {
     pub match_type: Option<String>,
 }
 
+/// Parameters for excluding a geographic location from a campaign.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ExcludeGeoTargetToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID to exclude the location from.
+    pub campaign_id: String,
+    /// Geo target constant ID to exclude — bare numeric ("2276") or full
+    /// resource name ("geoTargetConstants/2276"). Find IDs via search_geo_targets.
+    pub geo_target_id: String,
+}
+
+/// Parameters for removing a positive geographic target from a campaign.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RemoveGeoTargetToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID to remove the location target from.
+    pub campaign_id: String,
+    /// Geo target constant ID currently targeted — bare numeric ("2276") or full
+    /// resource name ("geoTargetConstants/2276").
+    pub geo_target_id: String,
+}
+
 /// Parameters for drafting sitelink extensions.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct DraftSitelinksToolParams {
@@ -209,6 +233,19 @@ pub struct CreateConversionActionToolParams {
     pub counting_type: Option<String>,
     /// Click-through attribution window in days, 1-90 (default 30).
     pub click_through_lookback_window_days: Option<i64>,
+}
+
+/// Parameters for setting a conversion action's primary/secondary status.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct SetConversionActionPrimaryToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The conversion action ID (numeric — the trailing segment of the
+    /// conversionAction resource name).
+    pub conversion_action_id: String,
+    /// true = primary (counts in the Conversions column and Smart Bidding);
+    /// false = secondary (observation only, excluded from the bidding signal).
+    pub primary: bool,
 }
 
 /// Parameters for pausing, enabling, or removing an entity.
@@ -882,6 +919,54 @@ impl GoogleAdsMcp {
         }
     }
 
+    #[tool(
+        description = "Exclude a geographic location from a campaign (negative location criterion — the inverse of update_campaign's positive geo targeting). Ads stop serving in that location. geo_target_id accepts a bare numeric ID or geoTargetConstants/{id}; find IDs via search_geo_targets. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn exclude_geo_target(
+        &self,
+        Parameters(params): Parameters<ExcludeGeoTargetToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::geo::exclude_geo_target(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.geo_target_id,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Remove a positively-targeted geographic location from a campaign (stop serving in a location that is currently an included target — e.g. trimming one country out of a multi-country campaign). Use this rather than exclude_geo_target when the location is already targeted: a negative criterion would collide with the existing positive one. Destructive — requires confirmed_twice. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn remove_geo_target(
+        &self,
+        Parameters(params): Parameters<RemoveGeoTargetToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::geo::remove_geo_target(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.geo_target_id,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
     #[tool(description = "Draft sitelink extensions for a campaign. Returns a preview.")]
     async fn draft_sitelinks(
         &self,
@@ -1377,6 +1462,30 @@ impl GoogleAdsMcp {
             &category,
             &counting_type,
             window,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Set a conversion action as primary (counts in the Conversions column and Smart Bidding) or secondary (observation only, excluded from the bidding signal). Use it to demote a value-0 signup event so it stops diluting a Maximize Conversions / Target CPA goal without losing its reporting. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_conversion_action_primary_status(
+        &self,
+        Parameters(params): Parameters<SetConversionActionPrimaryToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::conversions::set_conversion_action_primary_status(
+            &config,
+            &cid,
+            &params.conversion_action_id,
+            params.primary,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),

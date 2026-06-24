@@ -5,6 +5,38 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-06-24
+
+### Added
+
+- `exclude_geo_target`: exclude a geographic location from a campaign by adding
+  a negative `campaignCriterion` location criterion — the inverse of the
+  positive geo targeting `update_campaign` adds. Accepts the bare numeric geo
+  target constant ID (`2276`) or the full resource name
+  (`geoTargetConstants/2276`); discover IDs via `search_geo_targets`. Returns a
+  preview to confirm via `confirm_and_apply`. Previously a campaign location
+  could only be *added* (positively targeted), never excluded.
+- `remove_geo_target`: remove a positively-targeted location from a campaign
+  (`campaignCriterionOperation.remove`). This is the necessary counterpart to
+  `exclude_geo_target`: for `LOCATION` criteria the criterion ID equals the geo
+  target constant ID, so a campaign that already targets a location positively
+  cannot also receive a negative criterion for the same ID — it would collide on
+  `campaignCriteria/{campaign}~{id}`. Removing the existing positive criterion is
+  the correct operation when trimming a country out of a multi-country campaign.
+  Destructive — requires `confirmed_twice`.
+- `set_conversion_action_primary_status`: mark a conversion action primary
+  (`primaryForGoal = true` — counts in the Conversions column and feeds Smart
+  Bidding) or secondary (`primaryForGoal = false` — observation only, excluded
+  from the bidding signal). Emits a `conversionActionOperation.update` on
+  `primaryForGoal` with the matching `updateMask`. The lever for demoting a
+  value-0 signup event so it stops diluting a Maximize Conversions / Target CPA
+  goal without losing its historical reporting.
+
+### Changed
+
+- `get_conversion_actions` now also selects `conversion_action.primary_for_goal`
+  so callers can see (and verify) whether each action is primary or secondary.
+
 ## [0.5.2] - 2026-06-22
 
 ### Fixed

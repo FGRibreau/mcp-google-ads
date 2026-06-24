@@ -89,7 +89,7 @@ An MCP server that gives Claude full read + write access to Google Ads accounts 
 
 ## Features
 
-- **44 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, bidding, scheduling, keyword planner, conversions, policy
+- **47 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, bidding, scheduling, keyword planner, conversions, geo targeting, policy
 - **Two-step safety** - All mutations return a preview; nothing executes until you confirm
 - **Budget guardrails** - Configurable daily budget cap, bid increase limits, broad+manual CPC blocker
 - **Audit logging** - Every mutation logged to a local JSON file with timestamp and dry-run status
@@ -181,7 +181,7 @@ All configuration is via environment variables. No config files.
 | `get_policy_issues` | Disapproved or limited ads and policy violations |
 | `get_conversion_actions` | Conversion actions configured in the account |
 
-### Write (28 tools)
+### Write (31 tools)
 
 All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` to execute.
 
@@ -189,6 +189,8 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 |------|-------------|
 | `draft_campaign` | Create campaign + ad group + keywords. Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
 | `update_campaign` | Modify budget, bidding, targeting |
+| `exclude_geo_target` | Exclude a location from a campaign (negative location criterion) |
+| `remove_geo_target` | Remove a positively-targeted location from a campaign (destructive) |
 | `draft_responsive_search_ad` | Create RSA (3-15 headlines, 2-4 descriptions). Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
 | `create_ad_group` | Create ad group in existing campaign. Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
 | `update_ad_group` | Modify ad group name or CPC bid |
@@ -205,6 +207,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `add_audience_targeting` | Target audiences (TARGETING/OBSERVATION) |
 | `create_portfolio_bidding_strategy` | Portfolio bidding (CPA, ROAS, impression share) |
 | `create_conversion_action` | Create a conversion action for server-side click uploads (UPLOAD_CLICKS, gclid-based) |
+| `set_conversion_action_primary_status` | Mark a conversion action primary or secondary (demote a value-0 signup out of bidding) |
 | `update_keyword_bid` | Modify keyword CPC bid |
 | `upload_image_asset` | Upload base64-encoded image |
 | `upload_text_asset` | Create reusable text asset |
@@ -270,9 +273,9 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 |---|---|---|---|---|---|
 | **Language** | Rust | Python | Python | Python | Python |
 | **API version** | v23 | v23 | v23 | v21 | v23 |
-| **Total tools** | 44 | 43 | 52 | 63 | 2 |
-| **Write tools** | 27 | 16 | 26 | 25 | 0 |
-| **Tests** | 210 | partial | 0 | 0 | N/A |
+| **Total tools** | 47 | 43 | 52 | 63 | 2 |
+| **Write tools** | 30 | 16 | 26 | 25 | 0 |
+| **Tests** | 287 | partial | 0 | 0 | N/A |
 
 ### Features
 
