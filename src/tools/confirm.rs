@@ -174,10 +174,11 @@ async fn apply_mutate_operations(
 
     let response = client.mutate(&plan.customer_id, operations).await?;
 
-    // Google returns HTTP 200 with `partialFailureError` in the body when one or
-    // more operations fail (we request `partialFailure: true`). Treat its presence
-    // as a real failure instead of reporting "APPLIED" — otherwise the failure is
-    // invisible to the caller and the audit log records a false SUCCESS.
+    // Mutates are sent with `partialFailure: false` (atomic — a failing
+    // operation aborts the whole request as an HTTP error), so this field
+    // should never be set. Kept as a safety net: if it ever appears, report
+    // failure instead of "APPLIED" so the audit log can't record a false
+    // SUCCESS.
     if let Some(partial_error) = response.partial_failure_error {
         return Err(McpGoogleAdsError::PartialFailure(partial_error));
     }

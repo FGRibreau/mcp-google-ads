@@ -59,6 +59,12 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
                 "name": format!("{} Budget", params.campaign_name),
                 "amountMicros": dollars_to_micros(params.daily_budget).to_string(),
                 "deliveryMethod": "STANDARD",
+                // The API defaults explicitly_shared to TRUE, and campaign-level
+                // Smart Bidding (e.g. maximizeConversions) is rejected on shared
+                // budgets with BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET.
+                // This budget is created for exactly one campaign, so make it
+                // non-shared.
+                "explicitlyShared": false,
                 "resourceName": budget_resource
             }
         }
@@ -73,16 +79,16 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         "advertisingChannelType": params.channel_type,
         "campaignBudget": budget_resource,
         "resourceName": campaign_resource,
-        "networkSettings": {
-            "targetGoogleSearch": true,
-            "targetSearchNetwork": true,
-            "targetContentNetwork": false,
-            "targetPartnerSearchNetwork": false
-        },
         // Required by EU TTPA regulation (Oct 2025+). Defaults to false; users
         // running political ads must change this in the UI after creation.
         "containsEuPoliticalAdvertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"
     });
+
+    if let Some(network_settings) = network_settings_for_channel(params.channel_type) {
+        campaign_create
+            .as_object_mut()
+            .map(|o| o.insert("networkSettings".to_string(), network_settings));
+    }
 
     // Apply bidding strategy
     apply_bidding_strategy(
@@ -385,6 +391,36 @@ pub async fn resolve_campaign_budget_resource(
 pub struct KeywordInput {
     pub text: String,
     pub match_type: String,
+}
+
+/// Build the `networkSettings` payload appropriate for an advertising channel.
+///
+/// The settings must match the channel: a DISPLAY campaign with
+/// `targetGoogleSearch: true` is rejected with
+/// OPERATION_NOT_PERMITTED_FOR_CONTEXT on `network_settings.target_google_search`.
+///
+/// - SEARCH: Google Search only. Search partners and Display expansion are
+///   deliberately off — both default to opt-in spend that most advertisers
+///   don't want; they can be enabled later via the UI or an update.
+/// - DISPLAY: Display Network only.
+/// - Anything else (VIDEO, PERFORMANCE_MAX, SHOPPING, …): `None` — omit the
+///   field and let the API infer the valid networks for the channel.
+fn network_settings_for_channel(channel_type: &str) -> Option<serde_json::Value> {
+    match channel_type {
+        "SEARCH" => Some(json!({
+            "targetGoogleSearch": true,
+            "targetSearchNetwork": false,
+            "targetContentNetwork": false,
+            "targetPartnerSearchNetwork": false
+        })),
+        "DISPLAY" => Some(json!({
+            "targetGoogleSearch": false,
+            "targetSearchNetwork": false,
+            "targetContentNetwork": true,
+            "targetPartnerSearchNetwork": false
+        })),
+        _ => None,
+    }
 }
 
 /// Apply a bidding strategy to a campaign create JSON value.
@@ -769,6 +805,92 @@ mod tests {
         .unwrap();
         assert_eq!(preview["status_after_apply"], "ENABLED");
         assert!(preview.get("next_action_hint").is_none() || preview["next_action_hint"].is_null());
+    }
+
+    /// Draft a campaign with the given channel type and return the stored
+    /// plan's mutate operations for payload inspection.
+    fn draft_ops_for_channel(channel_type: &str) -> Vec<serde_json::Value> {
+        let config = Config::default();
+        let preview = draft_campaign(&DraftCampaignParams {
+            config: &config,
+            customer_id: "123-456-7890",
+            campaign_name: "Payload Test",
+            daily_budget: 5.0,
+            bidding_strategy: "MAXIMIZE_CONVERSIONS",
+            target_cpa: None,
+            target_roas: None,
+            channel_type,
+            ad_group_name: "AG",
+            keywords: vec![],
+            geo_target_ids: vec![],
+            language_ids: vec![],
+            status: None,
+        })
+        .unwrap();
+        let plan_id = preview["plan_id"].as_str().unwrap_or_default();
+        let plan = crate::safety::preview::get_plan(plan_id).expect("plan stored");
+        plan.mutate_operations.clone()
+    }
+
+    #[test]
+    fn test_draft_campaign_budget_not_shared() {
+        // The API defaults explicitly_shared to TRUE, which breaks campaign-level
+        // Smart Bidding (BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET).
+        let ops = draft_ops_for_channel("SEARCH");
+        let budget_create = ops
+            .iter()
+            .find_map(|op| op.pointer("/campaignBudgetOperation/create"))
+            .expect("budget operation present");
+        assert_eq!(budget_create["explicitlyShared"], json!(false));
+    }
+
+    #[test]
+    fn test_draft_campaign_search_network_settings() {
+        let ops = draft_ops_for_channel("SEARCH");
+        let ns = ops
+            .iter()
+            .find_map(|op| op.pointer("/campaignOperation/create/networkSettings"))
+            .expect("networkSettings present for SEARCH");
+        assert_eq!(ns["targetGoogleSearch"], json!(true));
+        assert_eq!(ns["targetContentNetwork"], json!(false));
+    }
+
+    #[test]
+    fn test_draft_campaign_display_network_settings() {
+        // A DISPLAY campaign with targetGoogleSearch=true is rejected with
+        // OPERATION_NOT_PERMITTED_FOR_CONTEXT on network_settings.target_google_search.
+        let ops = draft_ops_for_channel("DISPLAY");
+        let ns = ops
+            .iter()
+            .find_map(|op| op.pointer("/campaignOperation/create/networkSettings"))
+            .expect("networkSettings present for DISPLAY");
+        assert_eq!(ns["targetGoogleSearch"], json!(false));
+        assert_eq!(ns["targetSearchNetwork"], json!(false));
+        assert_eq!(ns["targetContentNetwork"], json!(true));
+    }
+
+    #[test]
+    fn test_draft_campaign_other_channels_omit_network_settings() {
+        for channel in ["VIDEO", "PERFORMANCE_MAX", "SHOPPING"] {
+            let ops = draft_ops_for_channel(channel);
+            let create = ops
+                .iter()
+                .find_map(|op| op.pointer("/campaignOperation/create"))
+                .expect("campaign operation present");
+            assert!(
+                create.get("networkSettings").is_none(),
+                "networkSettings should be omitted for {}",
+                channel
+            );
+        }
+    }
+
+    #[test]
+    fn test_network_settings_for_channel() {
+        assert!(network_settings_for_channel("SEARCH").is_some());
+        assert!(network_settings_for_channel("DISPLAY").is_some());
+        assert!(network_settings_for_channel("VIDEO").is_none());
+        assert!(network_settings_for_channel("PERFORMANCE_MAX").is_none());
     }
 
     #[test]

@@ -5,6 +5,26 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-07-06
+
+### Fixed
+
+- `draft_campaign`: the campaign budget is now created with
+  `explicitlyShared: false`. The Google Ads API defaults `explicitly_shared`
+  to `true`, and campaign-level Smart Bidding strategies (e.g.
+  `MAXIMIZE_CONVERSIONS`) are rejected on shared budgets with
+  `BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET`.
+- `draft_campaign`: `networkSettings` is now derived from `channel_type`
+  instead of always sending search-network settings. `DISPLAY` campaigns were
+  rejected with `OPERATION_NOT_PERMITTED_FOR_CONTEXT` on
+  `network_settings.target_google_search`. SEARCH targets Google Search only
+  (search partners off by default), DISPLAY targets the Display Network, and
+  other channel types omit `networkSettings` so the API infers valid networks.
+- `googleAds:mutate` requests are now sent with `partialFailure: false`
+  (atomic). Previously a failed multi-operation plan committed the operations
+  that succeeded — e.g. a rejected campaign create still left its freshly
+  created budget behind as an orphan, once per retry.
+
 ## [0.6.0] - 2026-06-24
 
 ### Added
