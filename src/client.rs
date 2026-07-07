@@ -387,7 +387,14 @@ impl GoogleAdsClient {
 
         let body = serde_json::json!({
             "mutateOperations": operations,
-            "partialFailure": true,
+            // Atomic on purpose: with partialFailure=true Google COMMITS the
+            // operations that succeed and only reports errors for the rest, so a
+            // failed multi-operation plan (e.g. draft_campaign's budget + campaign
+            // + ad group chain) leaves orphans behind — and since we surface any
+            // partial failure as a full error and keep the plan for retry, each
+            // retry would commit another orphan. With partialFailure=false any
+            // failing operation aborts the whole request and nothing is written.
+            "partialFailure": false,
         });
 
         // Debug: write request body to /tmp/mcp-google-ads-last-request.json for inspection
