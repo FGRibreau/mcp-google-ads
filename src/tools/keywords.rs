@@ -11,7 +11,8 @@ pub async fn get_keyword_performance(
 ) -> Result<String> {
     let date_clause = match (date_start, date_end) {
         (Some(s), Some(e)) => format!(" AND {}", gaql::date_clause(s, e)),
-        _ => String::new(),
+        // Default to the last 30 days so we never silently return lifetime totals.
+        _ => " AND segments.date DURING LAST_30_DAYS".to_string(),
     };
 
     let query = format!(

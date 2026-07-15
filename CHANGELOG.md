@@ -5,6 +5,18 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-07-15
+
+### Fixed
+
+- `get_campaign_performance`, `get_ad_performance` and `get_keyword_performance`
+  now default to the last 30 days (`segments.date DURING LAST_30_DAYS`) when no
+  date range is given, matching their documented behaviour. They previously
+  emitted no `segments.date` predicate at all and returned **lifetime totals**,
+  which silently inflated cost/clicks/conversions (observed ~2x the real 30-day
+  figures) and could mislead CPA/budget decisions. `get_search_terms` and
+  `get_geo_performance` already defaulted to 30 days and are unchanged.
+
 ## [0.6.1] - 2026-07-06
 
 ### Fixed

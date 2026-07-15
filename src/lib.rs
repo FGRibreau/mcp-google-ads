@@ -592,7 +592,7 @@ impl GoogleAdsMcp {
     // ── Keywords ────────────────────────────────────────────────────────
 
     #[tool(
-        description = "Get keyword-level performance metrics including quality score, match type, CPC, and conversions."
+        description = "Get keyword-level performance metrics including quality score, match type, CPC, and conversions. Defaults to last 30 days if no dates given."
     )]
     async fn get_keyword_performance(
         &self,

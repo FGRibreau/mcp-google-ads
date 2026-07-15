@@ -45,12 +45,13 @@ pub async fn get_campaign_performance(
     serde_json::to_string_pretty(&result).map_err(Into::into)
 }
 
-/// Build a WHERE-compatible date clause fragment.
-/// Returns an empty string if no dates are provided, or " AND <clause>" otherwise.
+/// Build a WHERE-compatible date clause fragment (prefixed with " AND ").
+/// Defaults to the last 30 days when no explicit range is given, so the tool
+/// never silently returns lifetime totals (matches get_search_terms/get_geo).
 fn build_date_clause(start: Option<&str>, end: Option<&str>) -> String {
     match (start, end) {
         (Some(s), Some(e)) => format!(" AND {}", gaql::date_clause(s, e)),
-        _ => String::new(),
+        _ => " AND segments.date DURING LAST_30_DAYS".to_string(),
     }
 }
 
