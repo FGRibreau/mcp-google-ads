@@ -185,6 +185,21 @@ pub struct RemoveGeoTargetToolParams {
     pub geo_target_id: String,
 }
 
+/// Parameters for setting a campaign's geo target type.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct SetCampaignGeoTargetTypeToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID whose geo target type setting to change.
+    pub campaign_id: String,
+    /// Positive geo target type. `PRESENCE` serves only to people physically
+    /// in (or regularly in) the targeted locations; `PRESENCE_OR_INTEREST`
+    /// (the API default) also serves people who show interest in them.
+    pub positive_geo_target_type: Option<models::GeoTargetType>,
+    /// Negative geo target type. `PRESENCE` or `PRESENCE_OR_INTEREST`.
+    pub negative_geo_target_type: Option<models::GeoTargetType>,
+}
+
 /// Parameters for drafting sitelink extensions.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct DraftSitelinksToolParams {
@@ -884,6 +899,7 @@ impl GoogleAdsMcp {
             .map(|kw| tools::keywords_write::KeywordWithMatchType {
                 text: kw.text,
                 match_type: kw.match_type,
+                final_url: kw.final_url,
             })
             .collect();
 
@@ -961,6 +977,31 @@ impl GoogleAdsMcp {
             &cid,
             &params.campaign_id,
             &params.geo_target_id,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Set a campaign's geo target type. positive_geo_target_type=PRESENCE restricts serving to people physically in (or regularly in) the targeted locations; PRESENCE_OR_INTEREST (the API default) also serves people who show interest in them. Optionally also set negative_geo_target_type. At least one must be provided. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_geo_target_type(
+        &self,
+        Parameters(params): Parameters<SetCampaignGeoTargetTypeToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::campaigns_write::set_campaign_geo_target_type(
+            &config,
+            &cid,
+            &params.campaign_id,
+            params.positive_geo_target_type,
+            params.negative_geo_target_type,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),

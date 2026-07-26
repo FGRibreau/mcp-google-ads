@@ -5,8 +5,8 @@ use serde_json::json;
 use crate::client::GoogleAdsClient;
 use crate::config::Config;
 use crate::error::Result;
-use crate::models::{AdStatus, NextActionHint};
-use crate::safety::guards::{check_blocked_operation, check_budget_cap};
+use crate::models::{AdStatus, GeoTargetType, NextActionHint};
+use crate::safety::guards::{check_blocked_operation, check_budget_cap, validate_final_url};
 use crate::safety::preview::{store_plan, ChangePlan};
 
 /// Convert a dollar amount to micros (Google Ads uses micros: $1 = 1_000_000).
@@ -155,15 +155,22 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
 
     // 6. Keywords (optional)
     for kw in &params.keywords {
+        let mut criterion = json!({
+            "adGroup": ad_group_resource,
+            "keyword": {
+                "text": kw.text,
+                "matchType": kw.match_type
+            }
+        });
+        if let Some(ref url) = kw.final_url {
+            validate_final_url(url)?;
+            if let Some(obj) = criterion.as_object_mut() {
+                obj.insert("finalUrls".to_string(), json!([url]));
+            }
+        }
         operations.push(json!({
             "adGroupCriterionOperation": {
-                "create": {
-                    "adGroup": ad_group_resource,
-                    "keyword": {
-                        "text": kw.text,
-                        "matchType": kw.match_type
-                    }
-                }
+                "create": criterion
             }
         }));
     }
@@ -386,11 +393,95 @@ pub async fn resolve_campaign_budget_resource(
         })
 }
 
+/// Set a campaign's geo target type setting (`campaign.geo_target_type_setting`).
+///
+/// Sets `positive_geo_target_type` and/or `negative_geo_target_type` via a
+/// `campaignOperation.update` with a matching field mask. At least one of the
+/// two must be provided; otherwise the call fails with a validation error
+/// (mirroring `update_campaign`'s "no changes" guard).
+///
+/// The common use is switching a campaign to `PRESENCE` so ads serve only to
+/// people physically in (or regularly in) the targeted locations, instead of
+/// the API default `PRESENCE_OR_INTEREST` which also serves people who merely
+/// show interest in them.
+///
+/// Returns a [`ChangePlan`] preview to confirm via `confirm_and_apply`.
+pub fn set_campaign_geo_target_type(
+    config: &Config,
+    customer_id: &str,
+    campaign_id: &str,
+    positive_geo_target_type: Option<GeoTargetType>,
+    negative_geo_target_type: Option<GeoTargetType>,
+) -> Result<serde_json::Value> {
+    check_blocked_operation("set_campaign_geo_target_type", &config.safety)?;
+
+    if positive_geo_target_type.is_none() && negative_geo_target_type.is_none() {
+        return Err(crate::error::McpGoogleAdsError::Validation(
+            "No geo target type specified; set positive_geo_target_type and/or \
+             negative_geo_target_type"
+                .to_string(),
+        ));
+    }
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let campaign_resource = format!("customers/{}/campaigns/{}", cid, campaign_id);
+
+    let mut setting = serde_json::Map::new();
+    let mut update_mask_fields: Vec<String> = Vec::new();
+    let mut changes = serde_json::Map::new();
+
+    if let Some(pos) = positive_geo_target_type {
+        setting.insert("positiveGeoTargetType".to_string(), json!(pos.as_api_str()));
+        update_mask_fields.push("geoTargetTypeSetting.positiveGeoTargetType".to_string());
+        changes.insert(
+            "positive_geo_target_type".to_string(),
+            json!(pos.as_api_str()),
+        );
+    }
+    if let Some(neg) = negative_geo_target_type {
+        setting.insert("negativeGeoTargetType".to_string(), json!(neg.as_api_str()));
+        update_mask_fields.push("geoTargetTypeSetting.negativeGeoTargetType".to_string());
+        changes.insert(
+            "negative_geo_target_type".to_string(),
+            json!(neg.as_api_str()),
+        );
+    }
+
+    let operations = vec![json!({
+        "campaignOperation": {
+            "update": {
+                "resourceName": campaign_resource,
+                "geoTargetTypeSetting": serde_json::Value::Object(setting)
+            },
+            "updateMask": update_mask_fields.join(",")
+        }
+    })];
+
+    let plan = ChangePlan::new(
+        "set_campaign_geo_target_type".to_string(),
+        "campaign".to_string(),
+        campaign_id.to_string(),
+        cid,
+        serde_json::Value::Object(changes),
+        false,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
 /// Input for a keyword to add during campaign drafting.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct KeywordInput {
     pub text: String,
     pub match_type: String,
+    /// Optional keyword-level final URL override. When set, clicks on this
+    /// keyword route to this landing page (`ad_group_criterion.final_urls`)
+    /// instead of inheriting the ad's final URL. Must be an absolute http(s)
+    /// URL. Omit to inherit the ad's final URL.
+    pub final_url: Option<String>,
 }
 
 /// Build the `networkSettings` payload appropriate for an advertising channel.
@@ -639,6 +730,7 @@ mod tests {
             keywords: vec![KeywordInput {
                 text: "test keyword".to_string(),
                 match_type: "EXACT".to_string(),
+                final_url: None,
             }],
             geo_target_ids: vec!["2840".to_string()],
             language_ids: vec!["1000".to_string()],
@@ -906,5 +998,175 @@ mod tests {
         let mut campaign2 = json!({"name": "test"});
         apply_bidding_strategy(&mut campaign2, "MANUAL_CPC", None, None);
         assert!(campaign2.get("manualCpc").is_some());
+    }
+
+    /// Return the sole `campaignOperation` from a stored plan for inspection.
+    fn campaign_update_op(preview: &serde_json::Value) -> serde_json::Value {
+        let plan_id = preview["plan_id"].as_str().expect("plan_id present");
+        let plan = crate::safety::preview::get_plan(plan_id).expect("plan stored");
+        plan.mutate_operations
+            .iter()
+            .find(|op| op.get("campaignOperation").is_some())
+            .expect("campaignOperation present")
+            .clone()
+    }
+
+    #[test]
+    fn test_set_geo_target_type_positive_presence() {
+        let config = Config::default();
+        let preview = set_campaign_geo_target_type(
+            &config,
+            "123-456-7890",
+            "12345",
+            Some(GeoTargetType::Presence),
+            None,
+        )
+        .expect("ok");
+
+        assert_eq!(preview["operation"], "set_campaign_geo_target_type");
+        assert_eq!(preview["status"], "PENDING_CONFIRMATION");
+        assert_eq!(preview["requires_double_confirm"], false);
+
+        let op = campaign_update_op(&preview);
+        assert_eq!(
+            op["campaignOperation"]["update"]["resourceName"],
+            "customers/1234567890/campaigns/12345"
+        );
+        assert_eq!(
+            op["campaignOperation"]["update"]["geoTargetTypeSetting"]["positiveGeoTargetType"],
+            "PRESENCE"
+        );
+        // Only the positive field was set: the negative must be absent.
+        assert!(op["campaignOperation"]["update"]["geoTargetTypeSetting"]
+            .get("negativeGeoTargetType")
+            .is_none());
+        assert_eq!(
+            op["campaignOperation"]["updateMask"],
+            "geoTargetTypeSetting.positiveGeoTargetType"
+        );
+    }
+
+    #[test]
+    fn test_set_geo_target_type_both_fields() {
+        let config = Config::default();
+        let preview = set_campaign_geo_target_type(
+            &config,
+            "1234567890",
+            "999",
+            Some(GeoTargetType::Presence),
+            Some(GeoTargetType::PresenceOrInterest),
+        )
+        .expect("ok");
+
+        let op = campaign_update_op(&preview);
+        let setting = &op["campaignOperation"]["update"]["geoTargetTypeSetting"];
+        assert_eq!(setting["positiveGeoTargetType"], "PRESENCE");
+        assert_eq!(setting["negativeGeoTargetType"], "PRESENCE_OR_INTEREST");
+        assert_eq!(
+            op["campaignOperation"]["updateMask"],
+            "geoTargetTypeSetting.positiveGeoTargetType,geoTargetTypeSetting.negativeGeoTargetType"
+        );
+    }
+
+    #[test]
+    fn test_set_geo_target_type_requires_at_least_one() {
+        let config = Config::default();
+        let err = set_campaign_geo_target_type(&config, "1234567890", "999", None, None)
+            .expect_err("both None must be rejected");
+        assert!(err.to_string().contains("No geo target type specified"));
+    }
+
+    #[test]
+    fn test_set_geo_target_type_blocked_operation() {
+        let mut config = Config::default();
+        config.safety.blocked_operations = vec!["set_campaign_geo_target_type".to_string()];
+        let err = set_campaign_geo_target_type(
+            &config,
+            "1234567890",
+            "999",
+            Some(GeoTargetType::Presence),
+            None,
+        )
+        .expect_err("blocked operation rejected");
+        assert!(err.to_string().contains("blocked"));
+    }
+
+    #[test]
+    fn test_draft_campaign_keyword_final_url_sets_final_urls() {
+        let config = Config::default();
+        let preview = draft_campaign(&DraftCampaignParams {
+            config: &config,
+            customer_id: "1234567890",
+            campaign_name: "C",
+            daily_budget: 5.0,
+            bidding_strategy: "MAXIMIZE_CONVERSIONS",
+            target_cpa: None,
+            target_roas: None,
+            channel_type: "SEARCH",
+            ad_group_name: "AG",
+            keywords: vec![
+                KeywordInput {
+                    text: "routed".to_string(),
+                    match_type: "EXACT".to_string(),
+                    final_url: Some("https://example.com/routed".to_string()),
+                },
+                KeywordInput {
+                    text: "inherit".to_string(),
+                    match_type: "PHRASE".to_string(),
+                    final_url: None,
+                },
+            ],
+            geo_target_ids: vec![],
+            language_ids: vec![],
+            status: None,
+        })
+        .expect("ok");
+
+        let plan_id = preview["plan_id"].as_str().expect("plan_id present");
+        let plan = crate::safety::preview::get_plan(plan_id).expect("plan stored");
+        let criteria: Vec<&serde_json::Value> = plan
+            .mutate_operations
+            .iter()
+            .filter_map(|op| op.pointer("/adGroupCriterionOperation/create"))
+            .collect();
+        assert_eq!(criteria.len(), 2);
+
+        let routed = criteria
+            .iter()
+            .find(|c| c["keyword"]["text"] == "routed")
+            .expect("routed keyword present");
+        assert_eq!(routed["finalUrls"], json!(["https://example.com/routed"]));
+
+        let inherit = criteria
+            .iter()
+            .find(|c| c["keyword"]["text"] == "inherit")
+            .expect("inherit keyword present");
+        assert!(inherit.get("finalUrls").is_none());
+    }
+
+    #[test]
+    fn test_draft_campaign_keyword_invalid_final_url_rejected() {
+        let config = Config::default();
+        let err = draft_campaign(&DraftCampaignParams {
+            config: &config,
+            customer_id: "1234567890",
+            campaign_name: "C",
+            daily_budget: 5.0,
+            bidding_strategy: "MAXIMIZE_CONVERSIONS",
+            target_cpa: None,
+            target_roas: None,
+            channel_type: "SEARCH",
+            ad_group_name: "AG",
+            keywords: vec![KeywordInput {
+                text: "bad".to_string(),
+                match_type: "EXACT".to_string(),
+                final_url: Some("not-a-url".to_string()),
+            }],
+            geo_target_ids: vec![],
+            language_ids: vec![],
+            status: None,
+        })
+        .expect_err("invalid final_url rejected");
+        assert!(err.to_string().contains("http(s) URL"));
     }
 }

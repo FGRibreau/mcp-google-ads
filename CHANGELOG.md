@@ -5,6 +5,39 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - Unreleased
+
+### Added
+
+- `set_campaign_geo_target_type`: set a campaign's
+  `campaign.geo_target_type_setting` — `positive_geo_target_type` and/or
+  `negative_geo_target_type` — via a `campaignOperation.update` with a matching
+  field mask. The lever `update_campaign` did not expose. Setting
+  `positive_geo_target_type = PRESENCE` restricts serving to people physically
+  in (or regularly in) the targeted locations, instead of the API default
+  `PRESENCE_OR_INTEREST` which also serves people who merely show interest in
+  them (and burns budget on out-of-area traffic). At least one of the two
+  fields must be provided or the call is rejected, mirroring `update_campaign`'s
+  "no changes" guard. Returns a preview to confirm via `confirm_and_apply`.
+- `models::GeoTargetType` enum (`PRESENCE_OR_INTEREST`, `PRESENCE`) with serde
+  rename `"SCREAMING_SNAKE_CASE"`, matching the Google Ads REST API
+  `GeoTargetTypeSetting` enum values. The same two values are valid for both the
+  positive and negative geo target type fields.
+- `draft_keywords` and `draft_campaign` now accept an optional per-keyword
+  `final_url`. When set, it writes `ad_group_criterion.final_urls` on the
+  keyword's `adGroupCriterionOperation.create`, routing clicks on that keyword
+  to a specific landing page instead of inheriting the ad's final URL. Omit the
+  field to inherit as before. Final URLs are validated as absolute `http(s)`
+  URLs bounded to 2048 characters (`safety::guards::validate_final_url`).
+
+### Changed (BREAKING)
+
+- `tools::campaigns_write::KeywordInput` and
+  `tools::keywords_write::KeywordWithMatchType` each gain a
+  `final_url: Option<String>` field. Rust library callers constructing these
+  structs must add `final_url: None` (or `Some(url)`). MCP-tool callers are
+  unaffected — the new field is optional in the tool schema.
+
 ## [0.6.2] - 2026-07-15
 
 ### Fixed
