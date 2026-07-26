@@ -89,7 +89,7 @@ An MCP server that gives Claude full read + write access to Google Ads accounts 
 
 ## Features
 
-- **47 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, bidding, scheduling, keyword planner, conversions, geo targeting, policy
+- **48 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, bidding, scheduling, keyword planner, conversions, geo targeting, policy
 - **Two-step safety** - All mutations return a preview; nothing executes until you confirm
 - **Budget guardrails** - Configurable daily budget cap, bid increase limits, broad+manual CPC blocker
 - **Audit logging** - Every mutation logged to a local JSON file with timestamp and dry-run status
@@ -181,7 +181,7 @@ All configuration is via environment variables. No config files.
 | `get_policy_issues` | Disapproved or limited ads and policy violations |
 | `get_conversion_actions` | Conversion actions configured in the account |
 
-### Write (31 tools)
+### Write (32 tools)
 
 All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` to execute.
 
@@ -191,10 +191,11 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `update_campaign` | Modify budget, bidding, targeting |
 | `exclude_geo_target` | Exclude a location from a campaign (negative location criterion) |
 | `remove_geo_target` | Remove a positively-targeted location from a campaign (destructive) |
+| `set_campaign_geo_target_type` | Set a campaign's geo target type (`PRESENCE` vs `PRESENCE_OR_INTEREST`) for positive and/or negative targeting |
 | `draft_responsive_search_ad` | Create RSA (3-15 headlines, 2-4 descriptions). Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
 | `create_ad_group` | Create ad group in existing campaign. Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
 | `update_ad_group` | Modify ad group name or CPC bid |
-| `draft_keywords` | Add keywords with match types |
+| `draft_keywords` | Add keywords with match types and optional per-keyword `final_url` (landing page override) |
 | `remove_keywords` | Remove keywords from ad group (destructive) |
 | `add_negative_keywords` | Block irrelevant searches |
 | `remove_negative_keywords` | Remove negative keywords (destructive) |
@@ -273,9 +274,9 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 |---|---|---|---|---|---|
 | **Language** | Rust | Python | Python | Python | Python |
 | **API version** | v23 | v23 | v23 | v21 | v23 |
-| **Total tools** | 47 | 43 | 52 | 63 | 2 |
-| **Write tools** | 30 | 16 | 26 | 25 | 0 |
-| **Tests** | 287 | partial | 0 | 0 | N/A |
+| **Total tools** | 48 | 43 | 52 | 63 | 2 |
+| **Write tools** | 32 | 16 | 26 | 25 | 0 |
+| **Tests** | 322 | partial | 0 | 0 | N/A |
 
 ### Features
 
@@ -314,7 +315,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | Read-only mode | yes | - | - | - | N/A |
 | Blocked operations list | yes | - | - | - | N/A |
 | Input validation (char limits, URLs) | yes | yes | Pydantic | partial | N/A |
-| Unit test coverage | 210 tests | partial | 0 | 0 | N/A |
+| Unit test coverage | 322 tests | partial | 0 | 0 | N/A |
 | Binary size / startup | 10.8 MB / instant | Python | Python | Python | Python |
 
 ---

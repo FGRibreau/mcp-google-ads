@@ -2,13 +2,18 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::error::{McpGoogleAdsError, Result};
-use crate::safety::guards::check_blocked_operation;
+use crate::safety::guards::{check_blocked_operation, validate_final_url};
 use crate::safety::preview::{store_plan, ChangePlan};
 
 /// Input for a keyword with its match type.
 pub struct KeywordWithMatchType {
     pub text: String,
     pub match_type: String,
+    /// Optional keyword-level final URL override. When set, clicks on this
+    /// keyword route to this landing page (`ad_group_criterion.final_urls`)
+    /// instead of inheriting the ad's final URL. Must be an absolute http(s)
+    /// URL. `None` inherits the ad's final URL.
+    pub final_url: Option<String>,
 }
 
 const VALID_MATCH_TYPES: &[&str] = &["EXACT", "PHRASE", "BROAD"];
@@ -34,7 +39,7 @@ pub fn draft_keywords(
         ));
     }
 
-    // Validate match types
+    // Validate match types and any keyword-level final URL overrides.
     for kw in &keywords {
         if !VALID_MATCH_TYPES.contains(&kw.match_type.as_str()) {
             return Err(McpGoogleAdsError::Validation(format!(
@@ -42,6 +47,9 @@ pub fn draft_keywords(
                 kw.match_type,
                 VALID_MATCH_TYPES.join(", ")
             )));
+        }
+        if let Some(ref url) = kw.final_url {
+            validate_final_url(url)?;
         }
     }
 
@@ -51,15 +59,21 @@ pub fn draft_keywords(
     let operations: Vec<serde_json::Value> = keywords
         .iter()
         .map(|kw| {
+            let mut criterion = json!({
+                "adGroup": ad_group_resource,
+                "keyword": {
+                    "text": kw.text,
+                    "matchType": kw.match_type
+                }
+            });
+            if let Some(ref url) = kw.final_url {
+                if let Some(obj) = criterion.as_object_mut() {
+                    obj.insert("finalUrls".to_string(), json!([url]));
+                }
+            }
             json!({
                 "adGroupCriterionOperation": {
-                    "create": {
-                        "adGroup": ad_group_resource,
-                        "keyword": {
-                            "text": kw.text,
-                            "matchType": kw.match_type
-                        }
-                    }
+                    "create": criterion
                 }
             })
         })
@@ -67,7 +81,7 @@ pub fn draft_keywords(
 
     let keyword_summary: Vec<serde_json::Value> = keywords
         .iter()
-        .map(|kw| json!({"text": kw.text, "match_type": kw.match_type}))
+        .map(|kw| json!({"text": kw.text, "match_type": kw.match_type, "final_url": kw.final_url}))
         .collect();
 
     let changes = json!({
@@ -285,6 +299,7 @@ mod tests {
             vec![KeywordWithMatchType {
                 text: "test".to_string(),
                 match_type: "INVALID".to_string(),
+                final_url: None,
             }],
         );
         assert!(result.is_err());
@@ -303,10 +318,12 @@ mod tests {
                 KeywordWithMatchType {
                     text: "buy shoes".to_string(),
                     match_type: "EXACT".to_string(),
+                    final_url: None,
                 },
                 KeywordWithMatchType {
                     text: "running shoes".to_string(),
                     match_type: "PHRASE".to_string(),
+                    final_url: None,
                 },
             ],
         );
@@ -314,6 +331,87 @@ mod tests {
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "draft_keywords");
         assert_eq!(preview["status"], "PENDING_CONFIRMATION");
+    }
+
+    #[test]
+    fn test_draft_keywords_final_url_sets_final_urls() {
+        let config = Config::default();
+        let preview = draft_keywords(
+            &config,
+            "1234567890",
+            "111",
+            vec![
+                KeywordWithMatchType {
+                    text: "routed".to_string(),
+                    match_type: "EXACT".to_string(),
+                    final_url: Some("https://example.com/routed".to_string()),
+                },
+                KeywordWithMatchType {
+                    text: "inherit".to_string(),
+                    match_type: "PHRASE".to_string(),
+                    final_url: None,
+                },
+            ],
+        )
+        .expect("ok");
+
+        let plan_id = preview["plan_id"].as_str().expect("plan_id present");
+        let plan = crate::safety::preview::get_plan(plan_id).expect("plan stored");
+
+        let criteria: Vec<&serde_json::Value> = plan
+            .mutate_operations
+            .iter()
+            .filter_map(|op| op.pointer("/adGroupCriterionOperation/create"))
+            .collect();
+        assert_eq!(criteria.len(), 2);
+
+        let routed = criteria
+            .iter()
+            .find(|c| c["keyword"]["text"] == "routed")
+            .expect("routed keyword present");
+        assert_eq!(routed["finalUrls"], json!(["https://example.com/routed"]));
+
+        // A keyword without a final_url must not carry a finalUrls field — it
+        // inherits the ad's final URL.
+        let inherit = criteria
+            .iter()
+            .find(|c| c["keyword"]["text"] == "inherit")
+            .expect("inherit keyword present");
+        assert!(inherit.get("finalUrls").is_none());
+    }
+
+    #[test]
+    fn test_draft_keywords_invalid_final_url_rejected() {
+        let config = Config::default();
+        let err = draft_keywords(
+            &config,
+            "1234567890",
+            "111",
+            vec![KeywordWithMatchType {
+                text: "bad".to_string(),
+                match_type: "EXACT".to_string(),
+                final_url: Some("not-a-url".to_string()),
+            }],
+        )
+        .expect_err("invalid final_url rejected");
+        assert!(err.to_string().contains("http(s) URL"));
+    }
+
+    #[test]
+    fn test_draft_keywords_empty_final_url_rejected() {
+        let config = Config::default();
+        let err = draft_keywords(
+            &config,
+            "1234567890",
+            "111",
+            vec![KeywordWithMatchType {
+                text: "bad".to_string(),
+                match_type: "EXACT".to_string(),
+                final_url: Some("".to_string()),
+            }],
+        )
+        .expect_err("empty final_url rejected");
+        assert!(err.to_string().contains("final_url must not be empty"));
     }
 
     #[test]
@@ -363,6 +461,7 @@ mod tests {
             vec![KeywordWithMatchType {
                 text: "test".to_string(),
                 match_type: "EXACT".to_string(),
+                final_url: None,
             }],
         );
         assert!(result.is_err());

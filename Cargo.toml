@@ -1,6 +1,6 @@
 [package]
 name = "mcp-google-ads"
-version = "0.6.2"
+version = "0.7.0"
 edition = "2021"
 description = "MCP server for Google Ads — full campaign management with safety guardrails"
 license = "MIT"
@@ -30,3 +30,4 @@ dirs = "6"
 [dev-dependencies]
 wiremock = "0.6"
 tokio-test = "0.4"
+proptest = "1"

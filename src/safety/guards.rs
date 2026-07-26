@@ -117,6 +117,39 @@ pub fn validate_sitelink_description(desc: &str) -> Result<()> {
     Ok(())
 }
 
+/// Maximum length (in characters) of a keyword-level final URL override.
+/// Google Ads caps final URLs at 2048 characters.
+pub const MAX_FINAL_URL_LEN: usize = 2048;
+
+/// Validate a keyword-level final URL override.
+///
+/// A final URL must be an absolute `http(s)` URL and stay within the Google
+/// Ads 2048-character cap. Empty / whitespace-only values are rejected — omit
+/// the field (pass `None`) when a keyword should inherit the ad's final URL
+/// rather than route to a specific landing page.
+pub fn validate_final_url(url: &str) -> Result<()> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err(McpGoogleAdsError::Validation(
+            "final_url must not be empty — omit it to inherit the ad's final URL".to_string(),
+        ));
+    }
+    let char_count = trimmed.chars().count();
+    if char_count > MAX_FINAL_URL_LEN {
+        return Err(McpGoogleAdsError::Validation(format!(
+            "final_url exceeds {} character limit ({} chars)",
+            MAX_FINAL_URL_LEN, char_count
+        )));
+    }
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return Err(McpGoogleAdsError::Validation(format!(
+            "final_url must be an absolute http(s) URL, got '{}'",
+            url
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,5 +404,46 @@ mod tests {
         assert!(validate_sitelink_description(&desc_at_limit).is_ok());
         let desc_over: String = "漢".repeat(36);
         assert!(validate_sitelink_description(&desc_over).is_err());
+    }
+
+    #[test]
+    fn test_validate_final_url_accepts_http_and_https() {
+        assert!(validate_final_url("https://example.com/lp").is_ok());
+        assert!(validate_final_url("http://example.com").is_ok());
+    }
+
+    #[test]
+    fn test_validate_final_url_rejects_empty_or_whitespace() {
+        assert!(validate_final_url("").is_err());
+        assert!(validate_final_url("   ").is_err());
+    }
+
+    #[test]
+    fn test_validate_final_url_rejects_non_http_scheme() {
+        let err = validate_final_url("ftp://example.com")
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(err.contains("absolute http(s) URL"));
+        assert!(validate_final_url("example.com").is_err());
+        assert!(validate_final_url("/relative/path").is_err());
+    }
+
+    #[test]
+    fn test_validate_final_url_rejects_over_length() {
+        let long = format!("https://example.com/{}", "a".repeat(MAX_FINAL_URL_LEN));
+        let err = validate_final_url(&long)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(err.contains("character limit"));
+    }
+
+    #[test]
+    fn test_validate_final_url_at_max_length_ok() {
+        let prefix = "https://";
+        let at_limit = format!("{}{}", prefix, "a".repeat(MAX_FINAL_URL_LEN - prefix.len()));
+        assert_eq!(at_limit.chars().count(), MAX_FINAL_URL_LEN);
+        assert!(validate_final_url(&at_limit).is_ok());
     }
 }
