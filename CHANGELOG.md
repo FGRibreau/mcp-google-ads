@@ -42,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   structs must add `final_url: None` (or `Some(url)`). MCP-tool callers are
   unaffected — the new field is optional in the tool schema.
 
+### Security
+
+- Removed unconditional fixed-path `/tmp` dumps of complete mutate request and
+  error bodies. Those payloads can contain customer campaign data and are no
+  longer persisted by the client.
+
 ## [0.6.2] - 2026-07-15
 
 ### Fixed
