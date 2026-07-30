@@ -19,7 +19,7 @@ async fn budget_update_targets_resolved_budget_resource_not_campaign_id() {
     // The campaign's budget has its own ID (987654321), different from the
     // campaign ID (12345).
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/googleAds:search"))
+        .and(path("/v25/customers/1234567890/googleAds:search"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [
                 { "campaign": { "campaignBudget": "customers/1234567890/campaignBudgets/987654321" } }
@@ -76,7 +76,7 @@ async fn budget_resolution_errors_when_campaign_has_no_budget() {
     let (mock, client) = common::spawn_mock_google_ads().await;
 
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/googleAds:search"))
+        .and(path("/v25/customers/1234567890/googleAds:search"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "results": [] })))
         .expect(1)
         .mount(&mock)

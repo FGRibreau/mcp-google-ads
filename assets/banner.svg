@@ -215,7 +215,7 @@
     <path d="M 465 155 L 455 160 L 465 165" fill="none" stroke="#4285F4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" repeatCount="indefinite" begin="1.5s"/>
     </path>
-    <text x="491" y="145" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="7" fill="#94a3b8">REST v23</text>
+    <text x="491" y="145" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="7" fill="#94a3b8">REST v25</text>
 
     <!-- Particles MCP → Ads -->
     <circle r="2.5" fill="#34A853" opacity="0">
@@ -242,7 +242,7 @@
     </g>
 
     <text x="75" y="68" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="15" font-weight="700" fill="#1e293b">Google Ads</text>
-    <text x="75" y="84" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">REST API v23</text>
+    <text x="75" y="84" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="10" fill="#64748b">REST API v25</text>
 
     <!-- Features -->
     <g transform="translate(15, 100)">

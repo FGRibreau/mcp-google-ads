@@ -1,4 +1,4 @@
-//! `MutateOperation` keys are validated client-side against the v23 whitelist
+//! `MutateOperation` keys are validated client-side against the v25 whitelist
 //! BEFORE any HTTP traffic. `dismissRecommendationOperation` is the canonical
 //! offender — accepting it was the v0.2.x root cause behind Bug 2.
 

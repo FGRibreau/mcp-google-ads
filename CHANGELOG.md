@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (BREAKING)
 
+- The default REST endpoint is now Google Ads API v25. The client-side
+  `MutateOperation` whitelist exactly matches the v25 `operation` oneof:
+  retired Feed and Extension operations were removed, and the Book Campaigns,
+  Quote Campaigns, and Recommendation Subscription operations were added.
 - `tools::campaigns_write::KeywordInput` and
   `tools::keywords_write::KeywordWithMatchType` each gain a
   `final_url: Option<String>` field. Rust library callers constructing these

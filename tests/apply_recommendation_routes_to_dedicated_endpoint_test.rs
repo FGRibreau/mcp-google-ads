@@ -12,7 +12,7 @@ async fn apply_recommendation_hits_dedicated_endpoint() {
     let (mock, client) = common::spawn_mock_google_ads().await;
 
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/recommendations:apply"))
+        .and(path("/v25/customers/1234567890/recommendations:apply"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [{ "resourceName": "customers/1234567890/recommendations/REC1" }]
         })))
@@ -21,7 +21,7 @@ async fn apply_recommendation_hits_dedicated_endpoint() {
         .await;
 
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/googleAds:mutate"))
+        .and(path("/v25/customers/1234567890/googleAds:mutate"))
         .respond_with(ResponseTemplate::new(500).set_body_string("MUST NOT HIT MUTATE"))
         .expect(0)
         .mount(&mock)
@@ -41,7 +41,7 @@ async fn apply_recommendation_body_carries_partial_failure_flag() {
     let (mock, client) = common::spawn_mock_google_ads().await;
 
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/recommendations:apply"))
+        .and(path("/v25/customers/1234567890/recommendations:apply"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"results": []})))
         .expect(1)
         .mount(&mock)

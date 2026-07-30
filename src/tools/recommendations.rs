@@ -37,7 +37,7 @@ pub async fn list_recommendations(client: &GoogleAdsClient, customer_id: &str) -
 /// The plan carries [`PlanDispatch::ApplyRecommendation`] so the apply step
 /// routes to the dedicated `recommendations:apply` RPC — NOT to
 /// `googleAds:mutate`, which does not accept `applyRecommendationOperation`
-/// as a valid `MutateOperation` key in v23.
+/// as a valid `MutateOperation` key in v25.
 pub fn apply_recommendation(
     config: &Config,
     customer_id: &str,
@@ -77,7 +77,7 @@ pub fn apply_recommendation(
 /// Returns a ChangePlan preview that must be confirmed via `confirm_and_apply`.
 ///
 /// The plan carries [`PlanDispatch::DismissRecommendation`] so the apply step
-/// routes to the dedicated `recommendations:dismiss` RPC. v23 has no
+/// routes to the dedicated `recommendations:dismiss` RPC. v25 has no
 /// `dismissRecommendationOperation` key on `MutateOperation` — routing it
 /// through `googleAds:mutate` returns 400.
 pub fn dismiss_recommendation(

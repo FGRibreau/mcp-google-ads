@@ -19,7 +19,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 async fn mock_empty_search() -> (MockServer, GoogleAdsClient) {
     let (mock, client) = common::spawn_mock_google_ads().await;
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/googleAds:search"))
+        .and(path("/v25/customers/1234567890/googleAds:search"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "results": [] })))
         .mount(&mock)
         .await;

@@ -60,7 +60,7 @@ async fn confirmed_twice_false_blocks_apply() {
 async fn confirmed_twice_true_lets_apply_proceed() {
     let mock = wiremock::MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/googleAds:mutate"))
+        .and(path("/v25/customers/1234567890/googleAds:mutate"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "mutateOperationResponses": [{"campaignOperation": {"resourceName": "customers/1234567890/campaigns/999"}}]
         })))
@@ -68,7 +68,7 @@ async fn confirmed_twice_true_lets_apply_proceed() {
         .mount(&mock)
         .await;
 
-    std::env::set_var("GOOGLE_ADS_API_BASE_URL", format!("{}/v23", mock.uri()));
+    std::env::set_var("GOOGLE_ADS_API_BASE_URL", format!("{}/v25", mock.uri()));
 
     let plan = make_destructive_plan();
     let plan_id = plan.plan_id.clone();

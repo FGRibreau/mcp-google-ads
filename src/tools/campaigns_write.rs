@@ -516,7 +516,7 @@ fn network_settings_for_channel(channel_type: &str) -> Option<serde_json::Value>
 
 /// Apply a bidding strategy to a campaign create JSON value.
 ///
-/// Note: in Google Ads API v23, `bidding_strategy_type` on Campaign is
+/// Note: in Google Ads API v25, `bidding_strategy_type` on Campaign is
 /// OUTPUT_ONLY. To use a standard bidding strategy at create time, set the
 /// corresponding bidding sub-field (e.g. `manualCpc`, `targetSpend`,
 /// `maximizeConversions`). The enum is then computed by the server.
