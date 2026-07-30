@@ -7,7 +7,7 @@ fn defaults_to_google_ads_api_v25() {
 }
 
 #[test]
-fn mutate_operation_whitelist_exactly_matches_v25_oneof() {
+fn supported_mutate_operation_whitelist_matches_v25_except_quote_campaigns() {
     let expected = BTreeSet::from([
         "adGroupAdLabelOperation",
         "adGroupAdOperation",
@@ -66,7 +66,6 @@ fn mutate_operation_whitelist_exactly_matches_v25_oneof() {
         "keywordPlanCampaignOperation",
         "keywordPlanOperation",
         "labelOperation",
-        "quoteCampaignsOperation",
         "recommendationSubscriptionOperation",
         "remarketingActionOperation",
         "sharedCriterionOperation",
@@ -85,4 +84,23 @@ fn mutate_operation_whitelist_exactly_matches_v25_oneof() {
         "whitelist contains duplicate keys"
     );
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn quote_campaigns_is_rejected_until_mutate_supports_validate_only() {
+    let operations = [mcp_google_ads::client::MutateOperation {
+        operation: serde_json::json!({
+            "quoteCampaignsOperation": {
+                "campaigns": []
+            }
+        }),
+    }];
+
+    let error = mcp_google_ads::client::GoogleAdsClient::validate_mutate_operations(&operations)
+        .expect_err("quoteCampaignsOperation requires validateOnly=true");
+
+    assert!(
+        error.contains("quoteCampaignsOperation") && error.contains("validateOnly=true"),
+        "rejection should explain the missing request-level contract: {error}"
+    );
 }

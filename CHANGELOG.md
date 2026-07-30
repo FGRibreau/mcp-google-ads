@@ -5,6 +5,24 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - Unreleased
+
+### Changed (BREAKING)
+
+- The default REST endpoint is now Google Ads API v25. The client-side
+  `MutateOperation` whitelist tracks the v25 `operation` oneof for operations
+  this client can safely send: retired Feed and Extension operations were
+  removed, while Book Campaigns and Recommendation Subscription operations were
+  added. `quoteCampaignsOperation` is rejected with an explicit validation
+  error because Google requires request-level `validateOnly=true`, which the
+  current `mutate` contract does not expose.
+
+### Security
+
+- Removed unconditional fixed-path `/tmp` dumps of complete mutate request and
+  error bodies. Those payloads can contain customer campaign data and are no
+  longer persisted by the client.
+
 ## [0.7.0] - Unreleased
 
 ### Added
@@ -32,21 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (BREAKING)
 
-- The default REST endpoint is now Google Ads API v25. The client-side
-  `MutateOperation` whitelist exactly matches the v25 `operation` oneof:
-  retired Feed and Extension operations were removed, and the Book Campaigns,
-  Quote Campaigns, and Recommendation Subscription operations were added.
 - `tools::campaigns_write::KeywordInput` and
   `tools::keywords_write::KeywordWithMatchType` each gain a
   `final_url: Option<String>` field. Rust library callers constructing these
   structs must add `final_url: None` (or `Some(url)`). MCP-tool callers are
   unaffected — the new field is optional in the tool schema.
-
-### Security
-
-- Removed unconditional fixed-path `/tmp` dumps of complete mutate request and
-  error bodies. Those payloads can contain customer campaign data and are no
-  longer persisted by the client.
 
 ## [0.6.2] - 2026-07-15
 

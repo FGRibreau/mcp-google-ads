@@ -18,12 +18,18 @@ pub const DEFAULT_BASE_URL: &str = "https://googleads.googleapis.com/v25";
 /// they don't need credentials files.
 pub const BASE_URL_ENV: &str = "GOOGLE_ADS_API_BASE_URL";
 
-/// Whitelist of top-level `MutateOperation` keys accepted by Google Ads v25.
+/// Whitelist of top-level `MutateOperation` keys this client can safely send
+/// to Google Ads v25.
 ///
 /// `mutate_operations` payloads with any key not in this list are rejected
 /// client-side before any HTTP traffic — this is the guard that catches
 /// `dismissRecommendationOperation` / `applyRecommendationOperation` mistakes
 /// (those operations live on dedicated RPCs, not on `googleAds:mutate`).
+///
+/// This is the v25 `operation` oneof minus `quoteCampaignsOperation`: Google
+/// requires that action to use request-level `validateOnly=true`, while
+/// [`GoogleAdsClient::mutate`] intentionally exposes only executing, atomic
+/// requests.
 ///
 /// Source: Google Ads API v25 `MutateOperation.operation` oneof definition:
 /// <https://developers.google.com/google-ads/api/reference/rpc/v25/MutateOperation>.
@@ -85,7 +91,6 @@ pub const VALID_MUTATE_OPERATION_KEYS: &[&str] = &[
     "keywordPlanCampaignOperation",
     "keywordPlanOperation",
     "labelOperation",
-    "quoteCampaignsOperation",
     "recommendationSubscriptionOperation",
     "remarketingActionOperation",
     "sharedCriterionOperation",
@@ -345,6 +350,14 @@ impl GoogleAdsClient {
                 }
             };
             for key in obj.keys() {
+                if key == "quoteCampaignsOperation" {
+                    return Err(format!(
+                        "MutateOperation key 'quoteCampaignsOperation' at index {} is not \
+                         supported: Google Ads API v25 requires request-level validateOnly=true, \
+                         but this client's mutate contract executes with validateOnly=false.",
+                        idx
+                    ));
+                }
                 if !VALID_MUTATE_OPERATION_KEYS.contains(&key.as_str()) {
                     return Err(format!(
                         "Unknown MutateOperation key '{}' at index {}. Recommendation operations \

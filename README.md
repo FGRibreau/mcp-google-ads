@@ -270,13 +270,18 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 
 ## Comparison with Other Google Ads MCP Servers
 
+_Official comparison verified 2026-07-30 against
+[`googleads/google-ads-mcp` at `f48a6b8`](https://github.com/googleads/google-ads-mcp/blob/f48a6b85e1f43ebd44a72531c9611e2b7265ca28/README.md#tools);
+its runtime imports Google Ads API
+[v24](https://github.com/googleads/google-ads-mcp/blob/f48a6b85e1f43ebd44a72531c9611e2b7265ca28/ads_mcp/utils.py#L25-L27)._
+
 | | **mcp-google-ads** (this) | [adloop](https://github.com/kLOsk/adloop) | [mikdeangelis](https://github.com/mikdeangelis/mcp-google-ads) | [grantweston](https://github.com/grantweston/google-ads-mcp-complete) | [Official Google](https://github.com/googleads/google-ads-mcp) |
 |---|---|---|---|---|---|
 | **Language** | Rust | Python | Python | Python | Python |
-| **API version** | v25 | v23 | v23 | v21 | v23 |
-| **Total tools** | 48 | 43 | 52 | 63 | 2 |
+| **API version** | v25 | v23 | v23 | v21 | v24 |
+| **Total tools** | 48 | 43 | 52 | 63 | 3 |
 | **Write tools** | 32 | 16 | 26 | 25 | 0 |
-| **Tests** | 322 | partial | 0 | 0 | N/A |
+| **Tests** | 326 | partial | 0 | 0 | N/A |
 
 ### Features
 
@@ -315,7 +320,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | Read-only mode | yes | - | - | - | N/A |
 | Blocked operations list | yes | - | - | - | N/A |
 | Input validation (char limits, URLs) | yes | yes | Pydantic | partial | N/A |
-| Unit test coverage | 322 tests | partial | 0 | 0 | N/A |
+| Unit test coverage | 326 tests | partial | 0 | 0 | N/A |
 | Binary size / startup | 10.8 MB / instant | Python | Python | Python | Python |
 
 ---

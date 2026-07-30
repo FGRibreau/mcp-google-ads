@@ -149,9 +149,15 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use std::sync::{Mutex, MutexGuard};
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn lock_env() -> MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn test_default_config() {
@@ -206,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_load_defaults() {
-        let _env_guard = ENV_LOCK.lock().expect("config test env lock poisoned");
+        let _env_guard = lock_env();
         // Clear any env vars that could interfere
         std::env::remove_var("GOOGLE_ADS_DEVELOPER_TOKEN");
         std::env::remove_var("GOOGLE_ADS_CUSTOMER_ID");
@@ -228,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_load_from_env() {
-        let _env_guard = ENV_LOCK.lock().expect("config test env lock poisoned");
+        let _env_guard = lock_env();
         std::env::set_var("GOOGLE_ADS_DEVELOPER_TOKEN", "test-dev-token");
         std::env::set_var("GOOGLE_ADS_CUSTOMER_ID", "123-456-7890");
         std::env::set_var("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "999-888-7777");
@@ -301,6 +307,7 @@ mod tests {
 
     #[test]
     fn test_login_customer_id_empty_string() {
+        let _env_guard = lock_env();
         std::env::set_var("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "");
         let config = Config::load().unwrap();
         assert!(config.ads.login_customer_id.is_none());
