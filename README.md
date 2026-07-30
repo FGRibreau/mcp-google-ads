@@ -281,7 +281,7 @@ its runtime imports Google Ads API
 | **API version** | v25 | v23 | v23 | v21 | v24 |
 | **Total tools** | 48 | 43 | 52 | 63 | 3 |
 | **Write tools** | 32 | 16 | 26 | 25 | 0 |
-| **Tests** | 326 | partial | 0 | 0 | N/A |
+| **Tests** | 336 total (326 passed + 10 ignored) | partial | 0 | 0 | N/A |
 
 ### Features
 
@@ -320,7 +320,7 @@ its runtime imports Google Ads API
 | Read-only mode | yes | - | - | - | N/A |
 | Blocked operations list | yes | - | - | - | N/A |
 | Input validation (char limits, URLs) | yes | yes | Pydantic | partial | N/A |
-| Unit test coverage | 326 tests | partial | 0 | 0 | N/A |
+| Unit test coverage | 336 total (326 passed + 10 ignored) | partial | 0 | 0 | N/A |
 | Binary size / startup | 10.8 MB / instant | Python | Python | Python | Python |
 
 ---
