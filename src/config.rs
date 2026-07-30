@@ -149,6 +149,9 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_default_config() {
@@ -203,6 +206,7 @@ mod tests {
 
     #[test]
     fn test_load_defaults() {
+        let _env_guard = ENV_LOCK.lock().expect("config test env lock poisoned");
         // Clear any env vars that could interfere
         std::env::remove_var("GOOGLE_ADS_DEVELOPER_TOKEN");
         std::env::remove_var("GOOGLE_ADS_CUSTOMER_ID");
@@ -224,6 +228,7 @@ mod tests {
 
     #[test]
     fn test_load_from_env() {
+        let _env_guard = ENV_LOCK.lock().expect("config test env lock poisoned");
         std::env::set_var("GOOGLE_ADS_DEVELOPER_TOKEN", "test-dev-token");
         std::env::set_var("GOOGLE_ADS_CUSTOMER_ID", "123-456-7890");
         std::env::set_var("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "999-888-7777");
