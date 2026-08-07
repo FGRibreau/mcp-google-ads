@@ -14,6 +14,14 @@ pub enum McpGoogleAdsError {
     },
     #[error("Safety violation: {0}")]
     Safety(String),
+    /// A mutate was rejected by Google's ad policy. Carries the parsed
+    /// violations so the caller can see which text tripped which policy and
+    /// whether an exemption can be requested.
+    #[error("{message}")]
+    PolicyExemption {
+        message: String,
+        violations: serde_json::Value,
+    },
     #[error("Operation failed (partial failure): {0}")]
     PartialFailure(serde_json::Value),
     #[error("Plan not found: {0}")]

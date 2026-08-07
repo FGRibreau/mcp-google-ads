@@ -234,6 +234,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | **PAUSED by default** | New campaigns/ad groups/ads created PAUSED. Response carries `status_after_apply` + `next_action_hint` describing how to flip to `ENABLED` via the `enable_entity` MCP tool — zero UI step needed. |
 | **`require_dry_run` hard guard** | When `GOOGLE_ADS_REQUIRE_DRY_RUN=true`, calling `confirm_and_apply` with `dry_run=false` returns `Err(DryRunRequired)` BEFORE any HTTP traffic. Pass `bypass_require_dry_run=true` for a one-shot override. |
 | **Double-confirm hard guard** | Destructive ops flagged `requires_double_confirm` need `confirmed_twice=true` or return `Err(DoubleConfirmRequired)`. |
+| **Policy exemptions are opt-in** | A mutate blocked by an *exemptible* ad policy is never silently exempted. The error names each policy and the exact offending text; pass `exempt_policy_violations=true` to retry the same plan with `exemptPolicyViolationKeys` (what the Google Ads UI does automatically). Applied exemptions are echoed back as `policy_exemptions_requested`. |
 | **MutateOperation whitelist** | Unknown top-level operation keys (typos, recommendation ops mis-routed) are rejected client-side BEFORE the HTTP call with a clear error pointing at the correct tool. |
 | **Blocked operations** | Configure `GOOGLE_ADS_BLOCKED_OPS` to disable specific tools |
 | **Read-only mode** | Set `GOOGLE_ADS_READ_ONLY=true` to disable all writes |
@@ -338,6 +339,11 @@ needed** — the new params are all optional. You can now:
   intentionally want to skip the dry-run guard (one-shot override).
 - Pass `confirmed_twice: true` to `confirm_and_apply` for destructive
   plans flagged `requires_double_confirm`.
+- Pass `exempt_policy_violations: true` to `confirm_and_apply` to request a
+  Google ad policy exemption when a mutate is blocked by an exemptible
+  violation. Required in practice for medical/health keywords, which trip
+  `HEALTH_IN_PERSONALIZED_ADS` (and, for contraception terms, `BIRTH_CONTROL`).
+  Only keywords can be exempted — responsive search ads cannot.
 - Read `status_after_apply` and `next_action_hint` from any draft / apply
   response to know whether a follow-up `enable_entity` call is needed.
 

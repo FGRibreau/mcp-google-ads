@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `confirm_and_apply` gains `exempt_policy_violations` (default `false`).
+  Google rejects many creates with `POLICY_ERROR` and an `isExemptible: true`
+  violation; such an operation is accepted when resubmitted carrying
+  `exemptPolicyViolationKeys`, which is exactly what the Google Ads web UI does
+  automatically. Without it, whole categories of legitimate keywords were
+  simply unaddable through this server: every medical/health term trips
+  `HEALTH_IN_PERSONALIZED_ADS` ("sensitive health information"), and
+  contraception terms additionally trip `BIRTH_CONTROL`. With the flag set, a
+  rejected mutate is retried **once** with an exemption key attached to each
+  offending operation, and the response reports what was exempted under
+  `policy_exemptions_requested` — an exemption is an assertion of eligibility
+  that Google still reviews, so it is never silent and never automatic.
+  Verified against the live v23 API: only `adGroupCriterionOperation` accepts
+  `exemptPolicyViolationKeys`; `campaignCriterionOperation` has no such field,
+  and `adGroupAdOperation.policyValidationParameter` rejects responsive search
+  ads with `UNSUPPORTED_AD_TYPE_FOR_EXEMPT_POLICY_VIOLATION_KEYS`. Violations on
+  operations that cannot be exempted are reported as such instead of being
+  retried pointlessly.
+- `safety::policy_exemption`: parses `policyViolationDetails` out of a
+  `GoogleAdsFailure`, maps each violation to its `mutate_operations` index
+  (treating an absent index as 0, since protobuf JSON omits zero values), and
+  attaches deduplicated exemption keys to the operations that support them.
 - `set_campaign_geo_target_type`: set a campaign's
   `campaign.geo_target_type_setting` — `positive_geo_target_type` and/or
   `negative_geo_target_type` — via a `campaignOperation.update` with a matching
@@ -30,6 +52,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field to inherit as before. Final URLs are validated as absolute `http(s)`
   URLs bounded to 2048 characters (`safety::guards::validate_final_url`).
 
+### Fixed
+
+- `create_structured_snippets` no longer rejects valid non-English headers. The
+  header whitelist was hardcoded to the 13 English values, so it refused
+  `Serviços` — the header the Portuguese accounts in this MCC actually run on —
+  and every other localized form, making the tool unusable outside English
+  accounts. The accepted set is language-specific and is *not* a literal
+  translation (verified live: `Neighborhoods` is valid but `Bairros` is not;
+  `Serviços` is valid but the unaccented `Servicos` is not), so a client-side
+  list can never be authoritative. The list is now guidance: an unrecognized
+  header is passed to Google, which validates it, and the preview carries a
+  `header_note` so a typo is still caught before applying. The known-good set
+  gained the twelve verified pt-BR headers. An empty header is still rejected.
+- Error hints now also match against the `GoogleAdsFailure` details, not just
+  the top-level message. Google's generic `"Request contains an invalid
+  argument."` never contained the error code the hints key on, so hints could
+  effectively only fire for GAQL query errors. Added a hint for the structured
+  snippet header, which Google rejects with a bare
+  `stringFormatError: INVALID_FORMAT` that never names the valid values.
+- Error responses now include the underlying `GoogleAdsFailure` instead of
+  discarding it. Google puts a generic `"Request contains an invalid argument."`
+  at the top level and the actual cause — error code, field path, offending
+  text, policy details — in `error.details`, which this server parsed into
+  `McpGoogleAdsError::GoogleAds.details` and then never rendered. Every
+  rejection therefore looked identical, and a policy block was indistinguishable
+  from a malformed field. Responses now carry a compact `failure_details`
+  summary (capped at 25 errors, with a `truncated` count beyond that), and
+  policy rejections carry `policy_violations` naming each policy and the exact
+  text that tripped it.
+- Removed two debug writes in `client.mutate` that dumped every request body and
+  error body to hardcoded `/tmp/mcp-google-ads-last-{request,error}.json`. They
+  silently no-opped on Windows and, on Unix, wrote full mutate payloads to a
+  world-readable path on every call.
+
 ### Changed (BREAKING)
 
 - `tools::campaigns_write::KeywordInput` and
@@ -37,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `final_url: Option<String>` field. Rust library callers constructing these
   structs must add `final_url: None` (or `Some(url)`). MCP-tool callers are
   unaffected — the new field is optional in the tool schema.
+- `tools::confirm::ConfirmApplyInput` gains an `exempt_policy_violations: bool`
+  field. Rust library callers constructing it literally should add
+  `..Default::default()`. MCP-tool callers are unaffected — the new parameter is
+  optional and defaults to `false`, preserving existing behaviour.
 
 ## [0.6.2] - 2026-07-15
 

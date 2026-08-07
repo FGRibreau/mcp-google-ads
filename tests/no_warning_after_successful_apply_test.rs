@@ -48,6 +48,7 @@ async fn successful_apply_has_no_warnings_field() {
             dry_run: false,
             bypass_require_dry_run: true,
             confirmed_twice: false,
+            ..Default::default()
         },
     )
     .await

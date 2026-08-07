@@ -43,6 +43,7 @@ async fn require_dry_run_true_blocks_apply_with_dryrun_false() {
             dry_run: false,
             bypass_require_dry_run: false,
             confirmed_twice: false,
+            ..Default::default()
         },
     )
     .await

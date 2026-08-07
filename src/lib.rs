@@ -229,7 +229,9 @@ pub struct CreateSnippetsToolParams {
     pub customer_id: Option<String>,
     /// The campaign ID to add snippets to.
     pub campaign_id: String,
-    /// Snippet header (e.g. Brands, Types, Amenities).
+    /// Snippet header, in the account's language (e.g. "Serviços" on a
+    /// pt-BR account, "Service catalog" on an en account). Must match one of
+    /// Google's predefined headers exactly, accents included.
     pub header: String,
     /// Snippet values.
     pub values: Vec<String>,
@@ -288,6 +290,15 @@ pub struct ConfirmApplyParams {
     /// Acknowledgement for plans flagged `requires_double_confirm`. Without
     /// `confirmed_twice=true`, those plans return an error and do nothing.
     pub confirmed_twice: Option<bool>,
+    /// Request a Google ad policy exemption if the mutate is rejected with
+    /// *exemptible* violations (e.g. `HEALTH_IN_PERSONALIZED_ADS`, which nearly
+    /// every medical/health keyword triggers). The operations are resubmitted
+    /// once with `exemptPolicyViolationKeys` — the same thing the Google Ads UI
+    /// does automatically. Defaults to `false`; when a mutate fails this way the
+    /// error lists the exact policies and offending text, and the plan is kept
+    /// so you can retry with this flag. Only keywords can be exempted —
+    /// responsive search ads cannot.
+    pub exempt_policy_violations: Option<bool>,
 }
 
 /// Parameters for creating a new ad group.
@@ -1052,7 +1063,9 @@ impl GoogleAdsMcp {
         }
     }
 
-    #[tool(description = "Draft structured snippet extensions for a campaign.")]
+    #[tool(
+        description = "Draft structured snippet extensions for a campaign. The header must be one of Google's predefined types IN THE ACCOUNT'S LANGUAGE (e.g. 'Serviços', not 'Service catalog', on a Portuguese account) — accents included. An unrecognized header is not blocked; it is sent to Google, and the preview carries a header_note listing known-good values."
+    )]
     async fn create_structured_snippets(
         &self,
         Parameters(params): Parameters<CreateSnippetsToolParams>,
@@ -1593,7 +1606,7 @@ impl GoogleAdsMcp {
     // ── Confirm & Apply ─────────────────────────────────────────────────
 
     #[tool(
-        description = "Execute a previously previewed change. IMPORTANT: defaults to dry_run=true. Set dry_run=false to make real changes. If config.safety.require_dry_run is true, dry_run=false will be rejected unless bypass_require_dry_run=true is also set."
+        description = "Execute a previously previewed change. IMPORTANT: defaults to dry_run=true. Set dry_run=false to make real changes. If config.safety.require_dry_run is true, dry_run=false will be rejected unless bypass_require_dry_run=true is also set. If the mutate is rejected by Google ad policy, the error lists the offending text and policy; when those violations are exemptible (common for medical/health keywords), retry the same plan_id with exempt_policy_violations=true."
     )]
     async fn confirm_and_apply(
         &self,
@@ -1610,21 +1623,58 @@ impl GoogleAdsMcp {
             dry_run,
             bypass_require_dry_run: params.bypass_require_dry_run.unwrap_or(false),
             confirmed_twice: params.confirmed_twice.unwrap_or(false),
+            exempt_policy_violations: params.exempt_policy_violations.unwrap_or(false),
         };
 
         match tools::confirm::confirm_and_apply(&config, input).await {
             Ok(result) => result.to_string(),
-            Err(e) => {
-                let hint = gaql::get_error_hint(&e.to_string())
-                    .unwrap_or("No additional hints available.");
-                serde_json::json!({
-                    "error": e.to_string(),
-                    "hint": hint,
-                })
-                .to_string()
-            }
+            Err(e) => error_response(&e).to_string(),
         }
     }
+}
+
+/// Render an error for the MCP client.
+///
+/// Google returns a generic top-level message ("Request contains an invalid
+/// argument") and puts the real cause in `details` as a `GoogleAdsFailure`.
+/// Dropping that, as this server used to, makes rejections undiagnosable — a
+/// policy block and a malformed field look identical. Surface a compact
+/// summary of the underlying errors alongside the message.
+fn error_response(e: &error::McpGoogleAdsError) -> serde_json::Value {
+    // The top-level message is generic ("Request contains an invalid argument");
+    // the specific error code lives in the GoogleAdsFailure details, so fall
+    // back to matching hints against those.
+    let hint = gaql::get_error_hint(&e.to_string())
+        .or_else(|| match e {
+            error::McpGoogleAdsError::GoogleAds { details, .. } => {
+                details.iter().find_map(|d| gaql::get_error_hint(d))
+            }
+            _ => None,
+        })
+        .unwrap_or("No additional hints available.");
+
+    let mut out = serde_json::json!({
+        "error": e.to_string(),
+        "hint": hint,
+    });
+
+    match e {
+        error::McpGoogleAdsError::GoogleAds { details, .. } if !details.is_empty() => {
+            let summary = safety::policy_exemption::summarize_failure(details);
+            if summary["errors"]
+                .as_array()
+                .is_some_and(|a| !a.is_empty())
+            {
+                out["failure_details"] = summary;
+            }
+        }
+        error::McpGoogleAdsError::PolicyExemption { violations, .. } => {
+            out["policy_violations"] = violations.clone();
+        }
+        _ => {}
+    }
+
+    out
 }
 
 impl GoogleAdsMcp {
@@ -1723,15 +1773,7 @@ impl GoogleAdsMcp {
 
         match f(client).await {
             Ok(result) => result,
-            Err(e) => {
-                let hint = gaql::get_error_hint(&e.to_string())
-                    .unwrap_or("No additional hints available.");
-                serde_json::json!({
-                    "error": e.to_string(),
-                    "hint": hint,
-                })
-                .to_string()
-            }
+            Err(e) => error_response(&e).to_string(),
         }
     }
 }

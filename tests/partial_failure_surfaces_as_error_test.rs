@@ -64,6 +64,7 @@ async fn partial_failure_error_is_reported_as_failure_and_plan_retained() {
             dry_run: false,
             bypass_require_dry_run: true,
             confirmed_twice: false,
+            ..Default::default()
         },
     )
     .await;
