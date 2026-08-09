@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Negative keyword lists (Google Ads "shared sets") are now addressable. The
+  server previously exposed only campaign-level negatives, so the only way to
+  apply one exclusion set across N campaigns was to write the same keywords N
+  times — 40 words across 5 campaigns meant 200 criteria to keep in sync by
+  hand, and every new campaign started unprotected. Eight tools close that gap:
+  `list_negative_keyword_lists` and `get_negative_keyword_list` (read),
+  `create_negative_keyword_list`, `add_to_negative_keyword_list`,
+  `remove_from_negative_keyword_list`, `attach_negative_keyword_list`,
+  `detach_negative_keyword_list` and `delete_negative_keyword_list` (write).
+  The three underlying `MutateOperation` keys — `sharedSetOperation`,
+  `sharedCriterionOperation`, `campaignSharedSetOperation` — were already in
+  the client whitelist; nothing but the tool surface was missing.
+  `create_negative_keyword_list` emits the set, its keywords and its campaign
+  links as ONE atomic mutate using the temporary resource ID `-1` (the same
+  technique `draft_campaign` uses for budget→campaign→ad group). Splitting them
+  would allow a list attached to campaigns while holding none of its keywords —
+  campaigns that read as protected and are not.
+  Everything that strips live exclusions (`remove_from_…`, `detach_…`,
+  `delete_…`) is flagged `requires_double_confirm`.
+  Input keywords are de-duplicated case-insensitively before submission,
+  because a single repeat would fail the whole atomic batch; the count dropped
+  is reported as `duplicates_dropped` so the edit is never silent. Shared set
+  and campaign IDs are validated as bare integers — they are interpolated into
+  both GAQL and resource names.
+  `get_negative_keywords` keeps returning campaign-level negatives only; its
+  description now says so and points at the new tools, since a campaign's
+  effective exclusions are the union of both mechanisms.
+
 - `confirm_and_apply` gains `exempt_policy_violations` (default `false`).
   Google rejects many creates with `POLICY_ERROR` and an `isExemptible: true`
   violation; such an operation is accepted when resubmitted carrying

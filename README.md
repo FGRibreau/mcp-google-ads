@@ -159,7 +159,7 @@ All configuration is via environment variables. No config files.
 
 ## Tools
 
-### Read (17 tools)
+### Read (19 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -170,7 +170,9 @@ All configuration is via environment variables. No config files.
 | `get_ad_performance` | Ad-level metrics with headlines and descriptions |
 | `get_keyword_performance` | Keyword metrics with quality scores |
 | `get_search_terms` | Actual user queries that triggered ads |
-| `get_negative_keywords` | List campaign negative keywords |
+| `get_negative_keywords` | List campaign-level negative keywords (shared-list exclusions are separate — see below) |
+| `list_negative_keyword_lists` | List negative keyword lists (shared sets) and the campaigns each is attached to |
+| `get_negative_keyword_list` | Keywords inside one negative keyword list, with criterion IDs |
 | `run_gaql` | Execute arbitrary GAQL queries (json/table/csv) |
 | `search_geo_targets` | Find location IDs for geo-targeting |
 | `get_geo_performance` | Performance breakdown by location |
@@ -181,7 +183,7 @@ All configuration is via environment variables. No config files.
 | `get_policy_issues` | Disapproved or limited ads and policy violations |
 | `get_conversion_actions` | Conversion actions configured in the account |
 
-### Write (32 tools)
+### Write (38 tools)
 
 All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` to execute.
 
@@ -197,8 +199,14 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `update_ad_group` | Modify ad group name or CPC bid |
 | `draft_keywords` | Add keywords with match types and optional per-keyword `final_url` (landing page override) |
 | `remove_keywords` | Remove keywords from ad group (destructive) |
-| `add_negative_keywords` | Block irrelevant searches |
-| `remove_negative_keywords` | Remove negative keywords (destructive) |
+| `add_negative_keywords` | Block irrelevant searches (campaign-level) |
+| `remove_negative_keywords` | Remove campaign-level negative keywords (destructive) |
+| `create_negative_keyword_list` | Create a negative keyword list (shared set), seed it and attach it to campaigns — one atomic mutate |
+| `add_to_negative_keyword_list` | Add keywords to an existing negative keyword list |
+| `remove_from_negative_keyword_list` | Remove keywords from a negative keyword list (destructive) |
+| `attach_negative_keyword_list` | Attach a negative keyword list to campaigns |
+| `detach_negative_keyword_list` | Detach a negative keyword list from campaigns (destructive) |
+| `delete_negative_keyword_list` | Delete a negative keyword list entirely (destructive) |
 | `draft_sitelinks` | Sitelink extensions |
 | `create_callouts` | Callout extensions |
 | `create_structured_snippets` | Structured snippet extensions |

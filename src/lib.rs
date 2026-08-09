@@ -161,6 +161,67 @@ pub struct AddNegativeKeywordsToolParams {
     pub match_type: Option<String>,
 }
 
+// ── Negative keyword list (shared set) parameter structs ────────────────
+
+/// Parameters for tools that address one negative keyword list.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct NegativeKeywordListParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Numeric ID of the negative keyword list (shared set).
+    pub shared_set_id: String,
+}
+
+/// Parameters for creating a negative keyword list.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct CreateNegativeKeywordListParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Name for the list. Must be unique within the account.
+    pub name: String,
+    /// Keywords to seed the list with. May be empty.
+    pub keywords: Option<Vec<String>>,
+    /// Match type for all keywords (default "PHRASE"). One of: EXACT, PHRASE, BROAD.
+    pub match_type: Option<String>,
+    /// Campaign IDs to attach the new list to. May be empty.
+    pub campaign_ids: Option<Vec<String>>,
+}
+
+/// Parameters for adding keywords to an existing negative keyword list.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct AddToNegativeKeywordListParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Numeric ID of the negative keyword list (shared set).
+    pub shared_set_id: String,
+    /// Keywords to add.
+    pub keywords: Vec<String>,
+    /// Match type for all keywords (default "PHRASE"). One of: EXACT, PHRASE, BROAD.
+    pub match_type: Option<String>,
+}
+
+/// Parameters for removing keywords from a negative keyword list.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RemoveFromNegativeKeywordListParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Numeric ID of the negative keyword list (shared set).
+    pub shared_set_id: String,
+    /// Criterion IDs to remove, as returned by get_negative_keyword_list.
+    pub criterion_ids: Vec<String>,
+}
+
+/// Parameters for attaching/detaching a negative keyword list to campaigns.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct NegativeKeywordListCampaignsParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Numeric ID of the negative keyword list (shared set).
+    pub shared_set_id: String,
+    /// Campaign IDs to attach to / detach from.
+    pub campaign_ids: Vec<String>,
+}
+
 /// Parameters for excluding a geographic location from a campaign.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ExcludeGeoTargetToolParams {
@@ -647,7 +708,9 @@ impl GoogleAdsMcp {
         .await
     }
 
-    #[tool(description = "Get all campaign-level negative keywords.")]
+    #[tool(
+        description = "Get all campaign-level negative keywords. These are negatives written directly on a campaign — exclusions coming from a shared negative keyword list are NOT included here; call list_negative_keyword_lists for those. A campaign's effective exclusions are the union of both."
+    )]
     async fn get_negative_keywords(
         &self,
         Parameters(params): Parameters<CustomerIdParams>,
@@ -655,6 +718,37 @@ impl GoogleAdsMcp {
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         self.run_tool(|client| async move {
             tools::keywords::get_negative_keywords(&client, &cid).await
+        })
+        .await
+    }
+
+    // ── Negative keyword lists / shared sets (read) ────────────────────
+
+    #[tool(
+        description = "List the account's negative keyword lists (shared sets), each with its member count and the campaigns it is attached to. A list with zero attached campaigns excludes nothing."
+    )]
+    async fn list_negative_keyword_lists(
+        &self,
+        Parameters(params): Parameters<CustomerIdParams>,
+    ) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        self.run_tool(|client| async move {
+            tools::shared_sets::list_negative_keyword_lists(&client, &cid).await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Get the keywords inside one negative keyword list, with the criterion_id of each — the handle remove_from_negative_keyword_list needs."
+    )]
+    async fn get_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<NegativeKeywordListParams>,
+    ) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let shared_set_id = params.shared_set_id;
+        self.run_tool(|client| async move {
+            tools::shared_sets::get_negative_keyword_list(&client, &cid, &shared_set_id).await
         })
         .await
     }
@@ -940,6 +1034,156 @@ impl GoogleAdsMcp {
             &params.campaign_id,
             params.keywords,
             match_type,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    // ── Negative keyword lists / shared sets (write) ───────────────────
+
+    #[tool(
+        description = "Create a negative keyword list (shared set) and, in the same atomic mutate, seed it with keywords and attach it to campaigns. Use this instead of repeating the same negatives on every campaign: one list edited once propagates to every campaign it is attached to. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn create_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<CreateNegativeKeywordListParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        let match_type = params.match_type.as_deref().unwrap_or("PHRASE");
+
+        match tools::shared_sets_write::create_negative_keyword_list(
+            &config,
+            &cid,
+            &params.name,
+            params.keywords.unwrap_or_default(),
+            match_type,
+            &params.campaign_ids.unwrap_or_default(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Add keywords to an existing negative keyword list. Adding a keyword the list already holds fails the whole batch — check get_negative_keyword_list first. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_to_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<AddToNegativeKeywordListParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        let match_type = params.match_type.as_deref().unwrap_or("PHRASE");
+
+        match tools::shared_sets_write::add_to_negative_keyword_list(
+            &config,
+            &cid,
+            &params.shared_set_id,
+            params.keywords,
+            match_type,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Remove keywords from a negative keyword list by criterion ID (IRREVERSIBLE). Every campaign using the list loses these exclusions."
+    )]
+    async fn remove_from_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<RemoveFromNegativeKeywordListParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::shared_sets_write::remove_from_negative_keyword_list(
+            &config,
+            &cid,
+            &params.shared_set_id,
+            params.criterion_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Attach a negative keyword list to one or more campaigns. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn attach_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<NegativeKeywordListCampaignsParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::shared_sets_write::attach_negative_keyword_list(
+            &config,
+            &cid,
+            &params.shared_set_id,
+            &params.campaign_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Detach a negative keyword list from one or more campaigns (IRREVERSIBLE link removal). Those campaigns immediately lose every exclusion the list carries; the list itself is kept."
+    )]
+    async fn detach_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<NegativeKeywordListCampaignsParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::shared_sets_write::detach_negative_keyword_list(
+            &config,
+            &cid,
+            &params.shared_set_id,
+            &params.campaign_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Delete a negative keyword list entirely (IRREVERSIBLE). Every campaign attached to it loses those exclusions."
+    )]
+    async fn delete_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<NegativeKeywordListParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::shared_sets_write::delete_negative_keyword_list(
+            &config,
+            &cid,
+            &params.shared_set_id,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
