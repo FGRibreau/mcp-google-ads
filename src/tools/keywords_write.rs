@@ -104,6 +104,65 @@ pub fn draft_keywords(
     Ok(preview)
 }
 
+/// Update the landing page (`ad_group_criterion.final_urls`) of an existing
+/// keyword, in place, via an `adGroupCriterionOperation.update` with an
+/// `updateMask` scoped to `finalUrls`.
+///
+/// Unlike a remove + re-create, an update preserves the keyword's quality
+/// score history — the reason this is a distinct tool rather than a
+/// `remove_keywords` followed by `draft_keywords`. Use it to route a keyword
+/// whose vocabulary matches a dedicated page (e.g. `webhook api` → `/webhook-api`)
+/// to that page without resetting its landing-page quality signal.
+///
+/// `final_url` must be an absolute http(s) URL (`validate_final_url`).
+/// Returns a ChangePlan preview that must be confirmed via `confirm_and_apply`.
+pub fn update_keyword_final_url(
+    config: &Config,
+    customer_id: &str,
+    ad_group_id: &str,
+    criterion_id: &str,
+    final_url: &str,
+) -> Result<serde_json::Value> {
+    check_blocked_operation("update_keyword_final_url", &config.safety)?;
+    validate_final_url(final_url)?;
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let resource_name = format!(
+        "customers/{}/adGroupCriteria/{}~{}",
+        cid, ad_group_id, criterion_id
+    );
+
+    let operation = json!({
+        "adGroupCriterionOperation": {
+            "update": {
+                "resourceName": resource_name,
+                "finalUrls": [final_url.trim()]
+            },
+            "updateMask": "finalUrls"
+        }
+    });
+
+    let changes = json!({
+        "ad_group_id": ad_group_id,
+        "criterion_id": criterion_id,
+        "final_url": final_url.trim()
+    });
+
+    let plan = ChangePlan::new(
+        "update_keyword_final_url".to_string(),
+        "ad_group_criterion".to_string(),
+        criterion_id.to_string(),
+        cid,
+        changes,
+        false,
+        vec![operation],
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
 /// Add negative keywords to a campaign.
 ///
 /// Creates `campaignCriterionOperation` entries with `negative: true` for each keyword.
@@ -412,6 +471,71 @@ mod tests {
         )
         .expect_err("empty final_url rejected");
         assert!(err.to_string().contains("final_url must not be empty"));
+    }
+
+    #[test]
+    fn test_update_keyword_final_url_success() {
+        let config = Config::default();
+        let preview = update_keyword_final_url(
+            &config,
+            "123-456-7890",
+            "111",
+            "222",
+            "https://hook0.com/webhook-api",
+        )
+        .expect("plan builds");
+        assert_eq!(preview["operation"], "update_keyword_final_url");
+        assert_eq!(preview["status"], "PENDING_CONFIRMATION");
+        assert_eq!(preview["requires_double_confirm"], false);
+
+        let plan_id = preview["plan_id"].as_str().expect("plan_id present");
+        let plan = crate::safety::preview::get_plan(plan_id).expect("plan stored");
+        let op = plan
+            .mutate_operations
+            .first()
+            .expect("one operation")
+            .pointer("/adGroupCriterionOperation")
+            .expect("adGroupCriterionOperation present");
+        assert_eq!(
+            op["update"]["resourceName"],
+            "customers/1234567890/adGroupCriteria/111~222"
+        );
+        assert_eq!(
+            op["update"]["finalUrls"],
+            json!(["https://hook0.com/webhook-api"])
+        );
+        assert_eq!(op["updateMask"], "finalUrls");
+    }
+
+    #[test]
+    fn test_update_keyword_final_url_invalid_rejected() {
+        let config = Config::default();
+        let err = update_keyword_final_url(&config, "123-456-7890", "111", "222", "not-a-url")
+            .expect_err("invalid final_url rejected");
+        assert!(err.to_string().contains("http(s) URL"));
+    }
+
+    #[test]
+    fn test_update_keyword_final_url_empty_rejected() {
+        let config = Config::default();
+        let err = update_keyword_final_url(&config, "123-456-7890", "111", "222", "")
+            .expect_err("empty final_url rejected");
+        assert!(err.to_string().contains("final_url must not be empty"));
+    }
+
+    #[test]
+    fn test_update_keyword_final_url_blocked() {
+        let mut config = Config::default();
+        config.safety.blocked_operations = vec!["update_keyword_final_url".to_string()];
+        let err = update_keyword_final_url(
+            &config,
+            "123-456-7890",
+            "111",
+            "222",
+            "https://hook0.com/webhook-api",
+        )
+        .expect_err("blocked operation rejected");
+        assert!(err.to_string().contains("blocked"));
     }
 
     #[test]

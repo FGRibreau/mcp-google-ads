@@ -425,6 +425,20 @@ pub struct UpdateKeywordBidToolParams {
     pub new_bid: f64,
 }
 
+/// Parameters for updating a keyword's landing page (final URL).
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct UpdateKeywordFinalUrlToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Ad group ID containing the keyword.
+    pub ad_group_id: String,
+    /// Criterion ID of the keyword.
+    pub criterion_id: String,
+    /// New landing page for clicks on this keyword. Absolute http(s) URL,
+    /// bounded to 2048 characters. Sets `ad_group_criterion.final_urls`.
+    pub final_url: String,
+}
+
 /// Parameters for uploading an image asset.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct UploadImageAssetToolParams {
@@ -1351,6 +1365,31 @@ impl GoogleAdsMcp {
             &params.criterion_id,
             params.current_bid,
             params.new_bid,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Update an existing keyword's landing page (ad_group_criterion.final_urls) in place via an update with field mask — preserves quality score history, unlike remove + re-create. Use to route a keyword to a page whose title matches its vocabulary. Returns a preview; call confirm_and_apply to execute."
+    )]
+    async fn update_keyword_final_url(
+        &self,
+        Parameters(params): Parameters<UpdateKeywordFinalUrlToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::keywords_write::update_keyword_final_url(
+            &config,
+            &cid,
+            &params.ad_group_id,
+            &params.criterion_id,
+            &params.final_url,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),

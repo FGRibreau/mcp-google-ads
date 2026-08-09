@@ -5,7 +5,21 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0] - Unreleased
+## [0.8.0] - 2026-08-09
+
+### Added
+
+- `update_keyword_final_url`: change the landing page
+  (`ad_group_criterion.final_urls`) of an existing keyword in place, via an
+  `adGroupCriterionOperation.update` with an `updateMask` scoped to `finalUrls`.
+  Unlike a `remove_keywords` + `draft_keywords`, an in-place update preserves the
+  keyword's quality-score history — the reason it is a distinct tool. This closes
+  the gap where the only way to re-route a keyword was to destroy and re-create
+  it, resetting the landing-page quality signal. Final URL validated as an
+  absolute `http(s)` URL bounded to 2048 characters. Returns a preview confirmed
+  via `confirm_and_apply`. Brings the tool count to 50.
+
+## [0.7.0] - 2026-07-26
 
 ### Added
 
