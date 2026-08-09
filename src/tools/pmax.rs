@@ -112,6 +112,10 @@ pub fn create_pmax_campaign(params: &CreatePmaxCampaignParams) -> Result<serde_j
                 "name": format!("{} Budget", params.campaign_name),
                 "amountMicros": dollars_to_micros(params.daily_budget).to_string(),
                 "deliveryMethod": "STANDARD",
+                // Must be explicit: budgets default to shared, and Google rejects
+                // a shared budget on a Performance Max campaign with
+                // BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET.
+                "explicitlyShared": false,
                 "resourceName": budget_resource
             }
         }
@@ -130,6 +134,9 @@ pub fn create_pmax_campaign(params: &CreatePmaxCampaignParams) -> Result<serde_j
         "status": resolved_status.as_api_str(),
         "advertisingChannelType": "PERFORMANCE_MAX",
         "campaignBudget": budget_resource,
+        // Required on every campaign create since the EU political ads
+        // regulation; omitting it fails with fieldError=REQUIRED.
+        "containsEuPoliticalAdvertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
         "resourceName": campaign_resource
     });
 
@@ -462,5 +469,43 @@ mod tests {
         assert_eq!(preview["status_after_apply"], "ENABLED");
         // No hint when ENABLED — the workflow is complete.
         assert!(preview.get("next_action_hint").is_none() || preview["next_action_hint"].is_null());
+    }
+
+    /// Pull the raw mutate operations back off the stored plan.
+    fn pmax_ops() -> Vec<serde_json::Value> {
+        let config = Config::default();
+        let params = default_params(&config);
+        let preview = create_pmax_campaign(&params).unwrap();
+        let plan_id = preview["plan_id"].as_str().unwrap_or_default();
+        let plan = crate::safety::preview::get_plan(plan_id).expect("plan stored");
+        plan.mutate_operations.clone()
+    }
+
+    #[test]
+    fn test_create_pmax_budget_not_shared() {
+        // Budgets default to shared server-side, and PMax rejects a shared budget
+        // with BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET. draft_campaign
+        // got this fix in 5670d2d; create_pmax_campaign was missed.
+        let ops = pmax_ops();
+        let budget_create = ops
+            .iter()
+            .find_map(|op| op.pointer("/campaignBudgetOperation/create"))
+            .expect("budget operation present");
+        assert_eq!(budget_create["explicitlyShared"], json!(false));
+    }
+
+    #[test]
+    fn test_create_pmax_sets_eu_political_advertising() {
+        // Required on every campaign create; without it the whole mutate fails
+        // with fieldError=REQUIRED on contains_eu_political_advertising.
+        let ops = pmax_ops();
+        let campaign_create = ops
+            .iter()
+            .find_map(|op| op.pointer("/campaignOperation/create"))
+            .expect("campaign operation present");
+        assert_eq!(
+            campaign_create["containsEuPoliticalAdvertising"],
+            json!("DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING")
+        );
     }
 }

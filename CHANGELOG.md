@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `link_asset_to_asset_group`: link an existing asset to a Performance Max
+  asset group via `assetGroupAssetOperation.create`. `upload_image_asset` only
+  ever created the asset — nothing attached it, so uploaded images sat unused
+  in the account's asset library. A PMax asset group without a
+  `MARKETING_IMAGE`, `SQUARE_MARKETING_IMAGE` and `LOGO` is "Not eligible" and
+  never serves, so this is the step that makes an asset group deliverable. The
+  field type is validated client-side against the 11 types PMax accepts, since
+  the API error for a bad one is opaque.
+- `add_asset_group_signal`: add search themes and/or audience signals to a
+  Performance Max asset group via `assetGroupSignalOperation.create`. PMax does
+  not take audiences as campaign criteria — `add_audience_targeting` writes a
+  `campaignCriterion`, which the API rejects for a PMax campaign. Accepts
+  search themes, audience IDs, or both, and enforces the 80-character search
+  theme limit before the request goes out.
+- `scripts/gads_mutate.py`: send a `googleAds:mutate` payload and print
+  Google's full error tree, with `--check` for `validateOnly`. The server
+  collapses API failures to "Request contains an invalid argument", which hides
+  the field-level reason that actually explains a rejected mutate.
+
+### Fixed
+
+- `create_pmax_campaign` now sets `campaign_budget.explicitly_shared = false`.
+  Budgets default to shared server-side, and Performance Max rejects a shared
+  budget with `BIDDING_STRATEGY_TYPE_INCOMPATIBLE_WITH_SHARED_BUDGET`.
+  `draft_campaign` got this fix in 5670d2d; the PMax path was missed.
+- `create_pmax_campaign` now sets
+  `campaign.contains_eu_political_advertising = DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING`.
+  The field is required on every campaign create, and omitting it failed the
+  entire mutate with `fieldError=REQUIRED`.
+
+  Together these two meant `create_pmax_campaign` could not create any
+  Performance Max campaign — every call failed at `confirm_and_apply`.
+
 - `set_campaign_geo_target_type`: set a campaign's
   `campaign.geo_target_type_setting` — `positive_geo_target_type` and/or
   `negative_geo_target_type` — via a `campaignOperation.update` with a matching
