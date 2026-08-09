@@ -89,7 +89,7 @@ An MCP server that gives Claude full read + write access to Google Ads accounts 
 
 ## Features
 
-- **48 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, bidding, scheduling, keyword planner, conversions, geo targeting, policy
+- **50 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, bidding, scheduling, keyword planner, conversions, geo targeting, policy
 - **Two-step safety** - All mutations return a preview; nothing executes until you confirm
 - **Budget guardrails** - Configurable daily budget cap, bid increase limits, broad+manual CPC blocker
 - **Audit logging** - Every mutation logged to a local JSON file with timestamp and dry-run status
@@ -197,6 +197,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `update_ad_group` | Modify ad group name or CPC bid |
 | `draft_keywords` | Add keywords with match types and optional per-keyword `final_url` (landing page override) |
 | `remove_keywords` | Remove keywords from ad group (destructive) |
+| `update_keyword_final_url` | Change an existing keyword's landing page in place (preserves quality score history, unlike remove + re-create) |
 | `add_negative_keywords` | Block irrelevant searches |
 | `remove_negative_keywords` | Remove negative keywords (destructive) |
 | `draft_sitelinks` | Sitelink extensions |
@@ -274,7 +275,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 |---|---|---|---|---|---|
 | **Language** | Rust | Python | Python | Python | Python |
 | **API version** | v23 | v23 | v23 | v21 | v23 |
-| **Total tools** | 48 | 43 | 52 | 63 | 2 |
+| **Total tools** | 50 | 43 | 52 | 63 | 2 |
 | **Write tools** | 32 | 16 | 26 | 25 | 0 |
 | **Tests** | 322 | partial | 0 | 0 | N/A |
 
