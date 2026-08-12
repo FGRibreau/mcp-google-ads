@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Demographic targeting is now reachable from the server: `exclude_demographics`,
+  `remove_demographic_criterion` and `get_demographics`. Household income band,
+  age bracket and gender exclusions previously had no tool at all, so every
+  campaign built through this server shipped serving to all incomes and all ages
+  — two mandatory items of the clinic playbook silently skipped, discoverable
+  only by noticing their absence later. The gap was being closed by hand-rolled
+  REST calls against the same credentials, which is exactly the workaround a
+  server exists to remove.
+  These are `AdGroupCriterion` rows and are **ad-group scoped** — Google has no
+  campaign-level demographic exclusion — so `exclude_demographics` takes a list
+  of ad group IDs and writes one negative criterion per (ad group × tier).
+  Criteria are created **by type**, never by ID: Google resolves the fixed
+  criterion ID itself. The ID table on the enums exists only for the removal
+  path, where `adGroupCriteria/{ad_group}~{id}` has to be built by hand.
+  Guardrails, each of which prevents a failure that is invisible until it costs
+  money: excluding every tier of a dimension is rejected (it would stop the ad
+  group serving to anyone, which Google accepts without complaint); ad groups and
+  tiers are de-duplicated, because a repeat collides on the shared resource name
+  and fails the whole batch; and a batch over 500 criteria is a hard error rather
+  than a truncation, since a partially applied exclusion reads as done.
+  `remove_demographic_criterion` is `requires_double_confirm` — dropping a
+  negative row silently re-opens the ad group to a tier the advertiser
+  deliberately excluded. It also handles the collision case: a tier already
+  present as an explicit *positive* row must be removed before the negative one
+  can be created, as both share a resource name.
+  The enums carry explicit `#[serde(rename)]` on every variant rather than
+  `rename_all = "SCREAMING_SNAKE_CASE"`. Serde does not insert a separator before
+  a digit, so the derived form of `IncomeRange0_50` is `INCOME_RANGE0_50` — a
+  spelling Google rejects. A table test pins the exact JSON spelling of all
+  seventeen variants against literals so the two representations cannot drift.
+  Note `Gender` is deliberately asymmetric: `GENDER_FEMALE` on the JSON surface,
+  bare `FEMALE` on the wire.
+
 - Negative keyword lists (Google Ads "shared sets") are now addressable. The
   server previously exposed only campaign-level negatives, so the only way to
   apply one exclusion set across N campaigns was to write the same keywords N

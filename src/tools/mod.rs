@@ -10,6 +10,7 @@ pub mod campaigns;
 pub mod campaigns_write;
 pub mod confirm;
 pub mod conversions;
+pub mod demographics;
 pub mod entity_lifecycle;
 pub mod extensions;
 pub mod extensions_write;

@@ -246,6 +246,52 @@ pub struct RemoveGeoTargetToolParams {
     pub geo_target_id: String,
 }
 
+/// Parameters for excluding demographic tiers from ad groups.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ExcludeDemographicsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Ad group IDs to exclude the tiers from. Demographic criteria are
+    /// ad-group scoped — there is no campaign-level equivalent — so list every
+    /// ad group the exclusion should cover. Find them with
+    /// `run_gaql("SELECT ad_group.id FROM ad_group WHERE campaign.id = ...")`.
+    pub ad_group_ids: Vec<String>,
+    /// Household income bands to exclude, e.g.
+    /// `["INCOME_RANGE_0_50", "INCOME_RANGE_UNDETERMINED"]` for the common
+    /// "lower 50% + unknown" cut. Bands are percentiles: `INCOME_RANGE_90_UP`
+    /// is the top 10%. Note `INCOME_RANGE_UNDETERMINED` ("Unknown") is often the
+    /// largest bucket in small or rural markets — excluding it can cut a lot of
+    /// volume, so check the distribution first on a small budget.
+    pub income_ranges: Option<Vec<models::IncomeRange>>,
+    /// Age brackets to exclude, e.g. `["AGE_RANGE_18_24", "AGE_RANGE_65_UP"]`.
+    pub age_ranges: Option<Vec<models::AgeRange>>,
+    /// Genders to exclude, e.g. `["GENDER_MALE"]`. At most two of the three.
+    pub genders: Option<Vec<models::Gender>>,
+}
+
+/// Parameters for removing a demographic criterion from an ad group.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RemoveDemographicCriterionToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The ad group ID holding the criterion.
+    pub ad_group_id: String,
+    /// Fixed criterion ID of the tier — read it from `get_demographics`.
+    /// Income: 510000 Unknown, 510001 lower 50%, 510002-510006 upward.
+    /// Age: 503001-503006 by bracket, 503999 Unknown.
+    /// Gender: 10 male, 11 female, 20 unknown.
+    pub criterion_id: String,
+}
+
+/// Parameters for reading demographic criteria.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct GetDemographicsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Optional campaign ID to scope the read to a single campaign.
+    pub campaign_id: Option<String>,
+}
+
 /// Parameters for setting a campaign's geo target type.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SetCampaignGeoTargetTypeToolParams {
@@ -1263,6 +1309,73 @@ impl GoogleAdsMcp {
         }
     }
 
+    // ── Demographics ─────────────────────────────────────────────────────
+
+    #[tool(
+        description = "Exclude demographic tiers (household income band, age bracket, gender) from ad groups. Writes one NEGATIVE ad_group_criterion per ad group × tier — excluded users never see the ad, which is absolute, not a bid adjustment. Demographic criteria are ad-group scoped: there is no campaign-level equivalent, so pass every ad group the exclusion should cover. Common clinic cut: income_ranges=[\"INCOME_RANGE_0_50\",\"INCOME_RANGE_UNDETERMINED\"]. If a tier already exists as a POSITIVE row on the ad group the create collides on the shared resource name — clear it first with remove_demographic_criterion. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn exclude_demographics(
+        &self,
+        Parameters(params): Parameters<ExcludeDemographicsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::demographics::exclude_demographics(
+            &config,
+            &cid,
+            &params.ad_group_ids,
+            &params.income_ranges.unwrap_or_default(),
+            &params.age_ranges.unwrap_or_default(),
+            &params.genders.unwrap_or_default(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Remove a demographic criterion from an ad group. Two uses: undoing an exclusion, and clearing a positive row that blocks exclude_demographics. Destructive — removing a negative row re-opens the ad group to that tier — so requires confirmed_twice. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn remove_demographic_criterion(
+        &self,
+        Parameters(params): Parameters<RemoveDemographicCriterionToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::demographics::remove_demographic_criterion(
+            &config,
+            &cid,
+            &params.ad_group_id,
+            &params.criterion_id,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "List the demographic criteria (income band, age bracket, gender) currently on the account's ad groups, positive and negative alike — the `negative` flag distinguishes them. Use it to verify an exclusion landed, or to find a positive row blocking one. Ad groups with no rows do not appear: absence means the ad group serves to everyone, which is the API default and not a misconfiguration."
+    )]
+    async fn get_demographics(
+        &self,
+        Parameters(params): Parameters<GetDemographicsToolParams>,
+    ) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let campaign_id = params.campaign_id;
+        self.run_tool(|client| async move {
+            tools::demographics::get_demographics(&client, &cid, campaign_id.as_deref()).await
+        })
+        .await
+    }
+
     #[tool(description = "Draft sitelink extensions for a campaign. Returns a preview.")]
     async fn draft_sitelinks(
         &self,
@@ -1905,10 +2018,7 @@ fn error_response(e: &error::McpGoogleAdsError) -> serde_json::Value {
     match e {
         error::McpGoogleAdsError::GoogleAds { details, .. } if !details.is_empty() => {
             let summary = safety::policy_exemption::summarize_failure(details);
-            if summary["errors"]
-                .as_array()
-                .is_some_and(|a| !a.is_empty())
-            {
+            if summary["errors"].as_array().is_some_and(|a| !a.is_empty()) {
                 out["failure_details"] = summary;
             }
         }
