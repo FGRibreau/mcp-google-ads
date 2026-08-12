@@ -70,9 +70,7 @@ pub async fn list_negative_keyword_lists(
 
             let attached: Vec<serde_json::Value> = links
                 .iter()
-                .filter(|l| {
-                    l.pointer("/sharedSet/id").and_then(|v| v.as_str()) == Some(set_id)
-                })
+                .filter(|l| l.pointer("/sharedSet/id").and_then(|v| v.as_str()) == Some(set_id))
                 .map(|l| {
                     serde_json::json!({
                         "id": l.pointer("/campaign/id").and_then(|v| v.as_str()),

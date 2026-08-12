@@ -81,7 +81,11 @@ fn validate_keyword_batch(keywords: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn shared_criterion_op(shared_set_resource: &str, text: &str, match_type: &str) -> serde_json::Value {
+fn shared_criterion_op(
+    shared_set_resource: &str,
+    text: &str,
+    match_type: &str,
+) -> serde_json::Value {
     json!({
         "sharedCriterionOperation": {
             "create": {
@@ -628,9 +632,8 @@ mod tests {
         let keywords: Vec<String> = (0..MAX_SHARED_SET_KEYWORDS + 1)
             .map(|i| format!("kw{}", i))
             .collect();
-        let err =
-            add_to_negative_keyword_list(&config, "1234567890", "999", keywords, "PHRASE")
-                .expect_err("over-limit batch rejected");
+        let err = add_to_negative_keyword_list(&config, "1234567890", "999", keywords, "PHRASE")
+            .expect_err("over-limit batch rejected");
         assert!(err.to_string().contains("at most 5000"));
     }
 
@@ -697,8 +700,7 @@ mod tests {
     #[test]
     fn test_delete_list_is_double_confirm() {
         let config = Config::default();
-        let preview =
-            delete_negative_keyword_list(&config, "1234567890", "999").expect("ok");
+        let preview = delete_negative_keyword_list(&config, "1234567890", "999").expect("ok");
 
         assert_eq!(preview["requires_double_confirm"], true);
         let ops = ops_of(&preview);
@@ -712,9 +714,8 @@ mod tests {
     fn test_blocked_operation_is_honoured() {
         let mut config = Config::default();
         config.safety.blocked_operations = vec!["create_negative_keyword_list".to_string()];
-        let err =
-            create_negative_keyword_list(&config, "1234567890", "L", vec![], "PHRASE", &[])
-                .expect_err("blocked");
+        let err = create_negative_keyword_list(&config, "1234567890", "L", vec![], "PHRASE", &[])
+            .expect_err("blocked");
         assert!(err.to_string().contains("blocked"));
     }
 }

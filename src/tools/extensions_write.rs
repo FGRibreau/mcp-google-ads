@@ -519,8 +519,13 @@ mod tests {
         );
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
-        let note = preview["changes"]["header_note"].as_str().unwrap_or_default();
-        assert!(note.contains("InvalidHeader"), "note should name the header");
+        let note = preview["changes"]["header_note"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            note.contains("InvalidHeader"),
+            "note should name the header"
+        );
         assert!(note.contains("language-specific"));
     }
 

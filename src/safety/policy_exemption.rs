@@ -96,9 +96,9 @@ fn operation_index(err: &Value) -> usize {
         .and_then(|l| l.get("fieldPathElements"))
         .and_then(|p| p.as_array())
         .and_then(|elems| {
-            elems.iter().find(|e| {
-                e.get("fieldName").and_then(|f| f.as_str()) == Some("mutate_operations")
-            })
+            elems
+                .iter()
+                .find(|e| e.get("fieldName").and_then(|f| f.as_str()) == Some("mutate_operations"))
         })
         .and_then(|e| e.get("index"))
         .and_then(|i| i.as_u64())
@@ -440,7 +440,10 @@ mod tests {
             .map(|i| health_failure(Some(i), &format!("kw {i}"), true))
             .collect();
         let s = summarize_failure(&blocks);
-        assert_eq!(s["errors"].as_array().map(|a| a.len()), Some(MAX_RENDERED_ERRORS));
+        assert_eq!(
+            s["errors"].as_array().map(|a| a.len()),
+            Some(MAX_RENDERED_ERRORS)
+        );
         assert_eq!(s["total_errors"], 40);
         assert_eq!(s["truncated"], 40 - MAX_RENDERED_ERRORS);
     }

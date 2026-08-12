@@ -95,14 +95,7 @@ pub async fn confirm_and_apply(
     }
 
     let client = GoogleAdsClient::new(config)?;
-    apply_plan(
-        &client,
-        config,
-        &plan,
-        &plan_id,
-        exempt_policy_violations,
-    )
-    .await
+    apply_plan(&client, config, &plan, &plan_id, exempt_policy_violations).await
 }
 
 /// Dispatch the plan to the correct Google Ads RPC and shape the response.
@@ -209,8 +202,7 @@ fn finish_mutate(
     // Record exemptions on the response: the caller asked for them, but the
     // fact that Google accepted an ad only under an exemption is material.
     if let Some(exempted) = exempted.filter(|e| !e.is_empty()) {
-        out["policy_exemptions_requested"] =
-            policy_exemption::violations_json(exempted, false);
+        out["policy_exemptions_requested"] = policy_exemption::violations_json(exempted, false);
         out["policy_exemption_note"] = json!(
             "These operations were accepted with a policy exemption request. \
              Google still reviews them; check approval status before relying on delivery."
@@ -226,7 +218,10 @@ async fn apply_mutate_operations(
     exempt_policy_violations: bool,
 ) -> Result<serde_json::Value> {
     let first_error = match client
-        .mutate(&plan.customer_id, to_mutate_operations(&plan.mutate_operations))
+        .mutate(
+            &plan.customer_id,
+            to_mutate_operations(&plan.mutate_operations),
+        )
         .await
     {
         Ok(response) => return finish_mutate(response, None),
@@ -279,7 +274,10 @@ async fn apply_mutate_operations(
     }
 
     let response = client
-        .mutate(&plan.customer_id, to_mutate_operations(&exemption.operations))
+        .mutate(
+            &plan.customer_id,
+            to_mutate_operations(&exemption.operations),
+        )
         .await?;
     finish_mutate(response, Some(&exemption.exempted))
 }
