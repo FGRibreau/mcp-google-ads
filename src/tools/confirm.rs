@@ -112,9 +112,10 @@ async fn apply_plan(
         PlanDispatch::MutateOperations => {
             apply_mutate_operations(client, plan, exempt_policy_violations).await
         }
-        PlanDispatch::ApplyRecommendation { resource_names } => {
-            apply_recommendation_dispatch(client, plan, resource_names).await
-        }
+        PlanDispatch::ApplyRecommendation {
+            resource_names,
+            apply_parameters,
+        } => apply_recommendation_dispatch(client, plan, resource_names, apply_parameters).await,
         PlanDispatch::DismissRecommendation { resource_names } => {
             dismiss_recommendation_dispatch(client, plan, resource_names).await
         }
@@ -286,9 +287,14 @@ async fn apply_recommendation_dispatch(
     client: &GoogleAdsClient,
     plan: &ChangePlan,
     resource_names: &[String],
+    apply_parameters: &Option<serde_json::Value>,
 ) -> Result<serde_json::Value> {
     let response = client
-        .apply_recommendations(&plan.customer_id, resource_names.to_vec())
+        .apply_recommendations(
+            &plan.customer_id,
+            resource_names.to_vec(),
+            apply_parameters.clone(),
+        )
         .await?;
 
     if let Some(partial_error) = response.partial_failure_error {

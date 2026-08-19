@@ -24,6 +24,11 @@ pub enum PlanDispatch {
     ApplyRecommendation {
         /// Full resource name(s): `customers/{cid}/recommendations/{rec_id}`.
         resource_names: Vec<String>,
+        /// The `apply_parameters` oneof, for the recommendation types that
+        /// cannot be applied from a bare resource name. Merged onto every
+        /// operation in the batch at dispatch time.
+        #[serde(default)]
+        apply_parameters: Option<serde_json::Value>,
     },
     DismissRecommendation {
         /// Full resource name(s): `customers/{cid}/recommendations/{rec_id}`.
