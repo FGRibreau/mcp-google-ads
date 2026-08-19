@@ -579,6 +579,34 @@ pub struct UploadTextAssetToolParams {
     pub text_content: String,
 }
 
+/// Parameters for linking an asset to a Performance Max asset group.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct LinkAssetToAssetGroupToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The asset group ID to link the asset to.
+    pub asset_group_id: String,
+    /// The asset ID to link (from upload_image_asset / upload_text_asset).
+    pub asset_id: String,
+    /// Field type: MARKETING_IMAGE, SQUARE_MARKETING_IMAGE, PORTRAIT_MARKETING_IMAGE,
+    /// LOGO, LANDSCAPE_LOGO, YOUTUBE_VIDEO, HEADLINE, DESCRIPTION, LONG_HEADLINE,
+    /// BUSINESS_NAME, CALL_TO_ACTION_SELECTION.
+    pub field_type: String,
+}
+
+/// Parameters for adding signals to a Performance Max asset group.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct AddAssetGroupSignalToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The asset group ID to add signals to.
+    pub asset_group_id: String,
+    /// Search themes (max 80 chars each) telling PMax what queries to look for.
+    pub search_themes: Option<Vec<String>>,
+    /// Audience IDs referencing customers/{cid}/audiences/{id}.
+    pub audience_ids: Option<Vec<String>>,
+}
+
 /// Parameters for setting campaign ad schedule.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SetCampaignScheduleToolParams {
@@ -1809,6 +1837,59 @@ impl GoogleAdsMcp {
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Link an uploaded asset to a Performance Max asset group. Required for images \
+                       to serve — upload_image_asset alone leaves the asset unattached. Returns a preview."
+    )]
+    async fn link_asset_to_asset_group(
+        &self,
+        Parameters(params): Parameters<LinkAssetToAssetGroupToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::assets::link_asset_to_asset_group(
+            &config,
+            &cid,
+            &params.asset_group_id,
+            &params.asset_id,
+            &params.field_type,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Add search themes and/or audience signals to a Performance Max asset group. \
+                       Use this for PMax audiences — add_audience_targeting writes a campaign \
+                       criterion, which PMax rejects. Returns a preview."
+    )]
+    async fn add_asset_group_signal(
+        &self,
+        Parameters(params): Parameters<AddAssetGroupSignalToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::audiences::add_asset_group_signal(
+            &config,
+            &cid,
+            &params.asset_group_id,
+            &params.search_themes.unwrap_or_default(),
+            &params.audience_ids.unwrap_or_default(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }
 
