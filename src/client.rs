@@ -397,11 +397,6 @@ impl GoogleAdsClient {
             "partialFailure": false,
         });
 
-        // Debug: write request body to /tmp/mcp-google-ads-last-request.json for inspection
-        if let Ok(body_pretty) = serde_json::to_string_pretty(&body) {
-            let _ = std::fs::write("/tmp/mcp-google-ads-last-request.json", &body_pretty);
-        }
-
         let response = self
             .http
             .post(&url)
@@ -413,8 +408,6 @@ impl GoogleAdsClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_body = response.text().await.unwrap_or_default();
-            // Debug: write full error body for inspection
-            let _ = std::fs::write("/tmp/mcp-google-ads-last-error.json", &error_body);
             return Err(parse_google_ads_error(status, &error_body));
         }
 

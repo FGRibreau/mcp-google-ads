@@ -588,6 +588,13 @@ fn apply_bidding_strategy(
 }
 
 /// Apply bidding strategy fields for an update operation, tracking which fields go into updateMask.
+///
+/// The mask must name *leaf* fields. Every bidding scheme (`manualCpc`,
+/// `maximizeConversions`, ...) is a message with subfields, and masking the
+/// message itself is rejected with `FIELD_HAS_SUBFIELDS`. So each arm masks one
+/// scalar subfield of its scheme — that is enough for the server to switch the
+/// campaign onto that scheme, and it clears the subfield when no value is given
+/// (e.g. MAXIMIZE_CONVERSIONS with no `target_cpa` means "no target CPA").
 fn apply_bidding_strategy_update(
     campaign: &mut serde_json::Value,
     update_mask_fields: &mut Vec<String>,
@@ -612,7 +619,7 @@ fn apply_bidding_strategy_update(
                 });
             }
             obj.insert("maximizeConversions".to_string(), mc);
-            update_mask_fields.push("maximizeConversions".to_string());
+            update_mask_fields.push("maximizeConversions.targetCpaMicros".to_string());
         }
         "MAXIMIZE_CONVERSION_VALUE" => {
             let mut mcv = json!({});
@@ -621,7 +628,7 @@ fn apply_bidding_strategy_update(
                     .map(|m| m.insert("targetRoas".to_string(), json!(roas)));
             }
             obj.insert("maximizeConversionValue".to_string(), mcv);
-            update_mask_fields.push("maximizeConversionValue".to_string());
+            update_mask_fields.push("maximizeConversionValue.targetRoas".to_string());
         }
         "TARGET_CPA" => {
             if let Some(cpa) = target_cpa {
@@ -629,18 +636,27 @@ fn apply_bidding_strategy_update(
                     "targetCpa".to_string(),
                     json!({ "targetCpaMicros": dollars_to_micros(cpa).to_string() }),
                 );
-                update_mask_fields.push("targetCpa".to_string());
+                update_mask_fields.push("targetCpa.targetCpaMicros".to_string());
             }
         }
         "TARGET_ROAS" => {
             if let Some(roas) = target_roas {
                 obj.insert("targetRoas".to_string(), json!({ "targetRoas": roas }));
-                update_mask_fields.push("targetRoas".to_string());
+                update_mask_fields.push("targetRoas.targetRoas".to_string());
             }
         }
         "MANUAL_CPC" => {
-            obj.insert("manualCpc".to_string(), json!({}));
-            update_mask_fields.push("manualCpc".to_string());
+            // Enhanced CPC is sunset; false is the neutral value, and masking it
+            // is what puts the campaign on Manual CPC.
+            obj.insert(
+                "manualCpc".to_string(),
+                json!({ "enhancedCpcEnabled": false }),
+            );
+            update_mask_fields.push("manualCpc.enhancedCpcEnabled".to_string());
+        }
+        "TARGET_SPEND" | "MAXIMIZE_CLICKS" => {
+            obj.insert("targetSpend".to_string(), json!({}));
+            update_mask_fields.push("targetSpend.cpcBidCeilingMicros".to_string());
         }
         _ => {
             obj.insert("biddingStrategyType".to_string(), json!(strategy));
@@ -998,6 +1014,65 @@ mod tests {
         let mut campaign2 = json!({"name": "test"});
         apply_bidding_strategy(&mut campaign2, "MANUAL_CPC", None, None);
         assert!(campaign2.get("manualCpc").is_some());
+    }
+
+    /// Every bidding scheme is a message with subfields, so the updateMask must
+    /// name a leaf. Masking the scheme itself is rejected by the API with
+    /// `FIELD_HAS_SUBFIELDS`.
+    #[test]
+    fn test_bidding_strategy_update_masks_are_leaf_fields() {
+        let cases = [
+            ("MANUAL_CPC", None, None, "manualCpc.enhancedCpcEnabled"),
+            (
+                "MAXIMIZE_CONVERSIONS",
+                None,
+                None,
+                "maximizeConversions.targetCpaMicros",
+            ),
+            (
+                "MAXIMIZE_CONVERSIONS",
+                Some(18.0),
+                None,
+                "maximizeConversions.targetCpaMicros",
+            ),
+            (
+                "MAXIMIZE_CONVERSION_VALUE",
+                None,
+                None,
+                "maximizeConversionValue.targetRoas",
+            ),
+            ("TARGET_CPA", Some(18.0), None, "targetCpa.targetCpaMicros"),
+            ("TARGET_ROAS", None, Some(3.0), "targetRoas.targetRoas"),
+            (
+                "TARGET_SPEND",
+                None,
+                None,
+                "targetSpend.cpcBidCeilingMicros",
+            ),
+        ];
+
+        for (strategy, cpa, roas, expected_mask) in cases {
+            let mut campaign = json!({"resourceName": "customers/1/campaigns/2"});
+            let mut mask = Vec::new();
+            apply_bidding_strategy_update(&mut campaign, &mut mask, strategy, cpa, roas);
+
+            assert_eq!(mask, vec![expected_mask.to_string()], "strategy {strategy}");
+            assert!(
+                mask.iter().all(|f| f.contains('.')),
+                "{strategy}: mask must name a leaf field, got {mask:?}"
+            );
+        }
+    }
+
+    /// Manual CPC must not be sent as a bare `{}` — the masked leaf needs a value.
+    #[test]
+    fn test_manual_cpc_update_sets_masked_leaf() {
+        let mut campaign = json!({"resourceName": "customers/1/campaigns/2"});
+        let mut mask = Vec::new();
+        apply_bidding_strategy_update(&mut campaign, &mut mask, "MANUAL_CPC", None, None);
+
+        assert_eq!(campaign["manualCpc"]["enhancedCpcEnabled"], json!(false));
+        assert!(campaign.get("biddingStrategyType").is_none());
     }
 
     /// Return the sole `campaignOperation` from a stored plan for inspection.

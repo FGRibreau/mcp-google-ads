@@ -48,6 +48,7 @@ async fn bypass_require_dry_run_lets_apply_proceed() {
             dry_run: false,
             bypass_require_dry_run: true, // explicit opt-out
             confirmed_twice: false,
+            ..Default::default()
         },
     )
     .await

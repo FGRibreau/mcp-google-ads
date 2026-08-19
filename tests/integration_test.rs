@@ -271,6 +271,7 @@ async fn test_draft_campaign_dry_run() {
             dry_run: true,
             bypass_require_dry_run: false,
             confirmed_twice: false,
+            ..Default::default()
         },
     )
     .await;

@@ -23,6 +23,13 @@ const VALID_MATCH_TYPES: &[&str] = &["EXACT", "PHRASE", "BROAD"];
 /// Validates match types and creates a ChangePlan preview.
 /// Each keyword becomes an `adGroupCriterionOperation`.
 ///
+/// Note on policy: health, medical and other sensitive-category keywords are
+/// routinely rejected at apply time under exemptible policies such as
+/// `HEALTH_IN_PERSONALIZED_ADS`. That is not a malformed operation — the Google
+/// Ads UI simply auto-requests an exemption. Apply with
+/// `confirm_and_apply(exempt_policy_violations=true)` to do the same here; see
+/// [`crate::safety::policy_exemption`].
+///
 /// TODO: Check broad+manual CPC blocker (requires querying the campaign's
 /// bidding strategy, which needs an async client call — deferred to a future iteration).
 pub fn draft_keywords(

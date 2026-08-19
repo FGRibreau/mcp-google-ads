@@ -4,6 +4,7 @@ use crate::client::{GoogleAdsClient, MutateOperation};
 use crate::config::Config;
 use crate::error::{McpGoogleAdsError, Result};
 use crate::safety::audit;
+use crate::safety::policy_exemption;
 use crate::safety::preview::{get_plan, remove_plan, ChangePlan, PlanDispatch};
 
 /// Parameters carried through `confirm_and_apply` callers down to the apply
@@ -21,6 +22,13 @@ pub struct ConfirmApplyInput {
     /// flagged `requires_double_confirm`. Without this, destructive plans
     /// return `Err(DoubleConfirmRequired)` instead of executing.
     pub confirmed_twice: bool,
+    /// Opt in to requesting policy exemptions. When the mutate is rejected with
+    /// *exemptible* policy violations, resubmit once with
+    /// `exemptPolicyViolationKeys` attached (what the Google Ads UI does
+    /// automatically). Off by default: an exemption request asserts the ad is
+    /// eligible under the policy's permitted use, which is the caller's call to
+    /// make, not ours. Default: `false`.
+    pub exempt_policy_violations: bool,
 }
 
 /// Confirm and apply a previously drafted change plan.
@@ -49,6 +57,7 @@ pub async fn confirm_and_apply(
         dry_run,
         bypass_require_dry_run,
         confirmed_twice,
+        exempt_policy_violations,
     } = input;
 
     let plan = get_plan(&plan_id).ok_or_else(|| {
@@ -86,7 +95,7 @@ pub async fn confirm_and_apply(
     }
 
     let client = GoogleAdsClient::new(config)?;
-    apply_plan(&client, config, &plan, &plan_id).await
+    apply_plan(&client, config, &plan, &plan_id, exempt_policy_violations).await
 }
 
 /// Dispatch the plan to the correct Google Ads RPC and shape the response.
@@ -95,11 +104,14 @@ async fn apply_plan(
     config: &Config,
     plan: &ChangePlan,
     plan_id: &str,
+    exempt_policy_violations: bool,
 ) -> Result<serde_json::Value> {
     let log_file = config.safety.log_file.to_string_lossy().to_string();
 
     let dispatch_result = match &plan.dispatch {
-        PlanDispatch::MutateOperations => apply_mutate_operations(client, plan).await,
+        PlanDispatch::MutateOperations => {
+            apply_mutate_operations(client, plan, exempt_policy_violations).await
+        }
         PlanDispatch::ApplyRecommendation { resource_names } => {
             apply_recommendation_dispatch(client, plan, resource_names).await
         }
@@ -160,33 +172,114 @@ async fn apply_plan(
     }
 }
 
-async fn apply_mutate_operations(
-    client: &GoogleAdsClient,
-    plan: &ChangePlan,
-) -> Result<serde_json::Value> {
-    let operations: Vec<MutateOperation> = plan
-        .mutate_operations
-        .iter()
+fn to_mutate_operations(ops: &[serde_json::Value]) -> Vec<MutateOperation> {
+    ops.iter()
         .map(|op| MutateOperation {
             operation: op.clone(),
         })
-        .collect();
+        .collect()
+}
 
-    let response = client.mutate(&plan.customer_id, operations).await?;
-
-    // Mutates are sent with `partialFailure: false` (atomic — a failing
-    // operation aborts the whole request as an HTTP error), so this field
-    // should never be set. Kept as a safety net: if it ever appears, report
-    // failure instead of "APPLIED" so the audit log can't record a false
-    // SUCCESS.
+/// Shape a successful mutate response, failing loudly on partial failure.
+///
+/// Mutates are sent with `partialFailure: false` (atomic — a failing operation
+/// aborts the whole request as an HTTP error), so `partial_failure_error`
+/// should never be set. Kept as a safety net: if it ever appears, report
+/// failure instead of "APPLIED" so the audit log can't record a false SUCCESS.
+fn finish_mutate(
+    response: crate::client::MutateResponse,
+    exempted: Option<&[policy_exemption::PolicyViolation]>,
+) -> Result<serde_json::Value> {
     if let Some(partial_error) = response.partial_failure_error {
         return Err(McpGoogleAdsError::PartialFailure(partial_error));
     }
 
-    Ok(json!({
+    let mut out = json!({
         "status": "APPLIED",
         "responses": response.mutate_operation_responses,
-    }))
+    });
+
+    // Record exemptions on the response: the caller asked for them, but the
+    // fact that Google accepted an ad only under an exemption is material.
+    if let Some(exempted) = exempted.filter(|e| !e.is_empty()) {
+        out["policy_exemptions_requested"] = policy_exemption::violations_json(exempted, false);
+        out["policy_exemption_note"] = json!(
+            "These operations were accepted with a policy exemption request. \
+             Google still reviews them; check approval status before relying on delivery."
+        );
+    }
+
+    Ok(out)
+}
+
+async fn apply_mutate_operations(
+    client: &GoogleAdsClient,
+    plan: &ChangePlan,
+    exempt_policy_violations: bool,
+) -> Result<serde_json::Value> {
+    let first_error = match client
+        .mutate(
+            &plan.customer_id,
+            to_mutate_operations(&plan.mutate_operations),
+        )
+        .await
+    {
+        Ok(response) => return finish_mutate(response, None),
+        Err(e) => e,
+    };
+
+    // Only a structured Google Ads failure can carry policy violations.
+    let McpGoogleAdsError::GoogleAds { ref details, .. } = first_error else {
+        return Err(first_error);
+    };
+
+    let violations = policy_exemption::parse_violations(details);
+    let exemptible: Vec<_> = violations
+        .iter()
+        .filter(|v| v.is_exemptible)
+        .cloned()
+        .collect();
+
+    if exemptible.is_empty() {
+        // Nothing exemptible — surface the original error, which now renders
+        // the underlying GoogleAdsFailure detail rather than just "400".
+        return Err(first_error);
+    }
+
+    if !exempt_policy_violations {
+        return Err(McpGoogleAdsError::PolicyExemption {
+            message: format!(
+                "Blocked by Google ad policy: {} exemptible policy violation(s). \
+                 These are the same violations the Google Ads UI auto-exempts. \
+                 To request an exemption, call confirm_and_apply again with the same \
+                 plan_id and exempt_policy_violations=true. The plan is preserved.",
+                exemptible.len()
+            ),
+            violations: policy_exemption::violations_json(&exemptible, false),
+        });
+    }
+
+    let exemption = policy_exemption::apply_exemptions(&plan.mutate_operations, &exemptible);
+    if exemption.exempted.is_empty() {
+        return Err(McpGoogleAdsError::PolicyExemption {
+            message: format!(
+                "Blocked by Google ad policy: {} violation(s) that cannot be exempted \
+                 through the API. Only ad group criteria (keywords) accept \
+                 exemptPolicyViolationKeys; responsive search ads do not. \
+                 Revise the offending text instead.",
+                exemption.unsupported.len()
+            ),
+            violations: policy_exemption::violations_json(&exemption.unsupported, false),
+        });
+    }
+
+    let response = client
+        .mutate(
+            &plan.customer_id,
+            to_mutate_operations(&exemption.operations),
+        )
+        .await?;
+    finish_mutate(response, Some(&exemption.exempted))
 }
 
 async fn apply_recommendation_dispatch(
@@ -282,6 +375,7 @@ mod tests {
                 dry_run: false,
                 bypass_require_dry_run: false,
                 confirmed_twice: false,
+                ..Default::default()
             },
         )
         .await
@@ -315,6 +409,7 @@ mod tests {
                 dry_run: true,
                 bypass_require_dry_run: false,
                 confirmed_twice: false,
+                ..Default::default()
             },
         )
         .await

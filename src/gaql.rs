@@ -265,6 +265,16 @@ static ERROR_HINTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::ne
         "AUTHORIZATION_ERROR",
         "Check your developer token, customer ID, and login customer ID configuration.",
     );
+    // Google rejects a bad structured snippet header with a bare
+    // `stringFormatError: INVALID_FORMAT` and never names the valid values.
+    // Keyed on the field path, which only appears for this asset type.
+    m.insert(
+        "structured_snippet_asset",
+        "Structured snippet headers are language-specific and must match Google's \
+         predefined list for the ACCOUNT'S language, accents included — e.g. \
+         'Serviços' on a pt-BR account, 'Service catalog' on an en account. Note the \
+         sets are not literal translations: 'Neighborhoods' is valid but 'Bairros' is not.",
+    );
     m
 });
 

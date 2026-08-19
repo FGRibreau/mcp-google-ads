@@ -159,7 +159,7 @@ All configuration is via environment variables. No config files.
 
 ## Tools
 
-### Read (17 tools)
+### Read (19 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -170,7 +170,9 @@ All configuration is via environment variables. No config files.
 | `get_ad_performance` | Ad-level metrics with headlines and descriptions |
 | `get_keyword_performance` | Keyword metrics with quality scores |
 | `get_search_terms` | Actual user queries that triggered ads |
-| `get_negative_keywords` | List campaign negative keywords |
+| `get_negative_keywords` | List campaign-level negative keywords (shared-list exclusions are separate — see below) |
+| `list_negative_keyword_lists` | List negative keyword lists (shared sets) and the campaigns each is attached to |
+| `get_negative_keyword_list` | Keywords inside one negative keyword list, with criterion IDs |
 | `run_gaql` | Execute arbitrary GAQL queries (json/table/csv) |
 | `search_geo_targets` | Find location IDs for geo-targeting |
 | `get_geo_performance` | Performance breakdown by location |
@@ -181,7 +183,7 @@ All configuration is via environment variables. No config files.
 | `get_policy_issues` | Disapproved or limited ads and policy violations |
 | `get_conversion_actions` | Conversion actions configured in the account |
 
-### Write (32 tools)
+### Write (38 tools)
 
 All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` to execute.
 
@@ -198,8 +200,14 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `draft_keywords` | Add keywords with match types and optional per-keyword `final_url` (landing page override) |
 | `remove_keywords` | Remove keywords from ad group (destructive) |
 | `update_keyword_final_url` | Change an existing keyword's landing page in place (preserves quality score history, unlike remove + re-create) |
-| `add_negative_keywords` | Block irrelevant searches |
-| `remove_negative_keywords` | Remove negative keywords (destructive) |
+| `add_negative_keywords` | Block irrelevant searches (campaign-level) |
+| `remove_negative_keywords` | Remove campaign-level negative keywords (destructive) |
+| `create_negative_keyword_list` | Create a negative keyword list (shared set), seed it and attach it to campaigns — one atomic mutate |
+| `add_to_negative_keyword_list` | Add keywords to an existing negative keyword list |
+| `remove_from_negative_keyword_list` | Remove keywords from a negative keyword list (destructive) |
+| `attach_negative_keyword_list` | Attach a negative keyword list to campaigns |
+| `detach_negative_keyword_list` | Detach a negative keyword list from campaigns (destructive) |
+| `delete_negative_keyword_list` | Delete a negative keyword list entirely (destructive) |
 | `draft_sitelinks` | Sitelink extensions |
 | `create_callouts` | Callout extensions |
 | `create_structured_snippets` | Structured snippet extensions |
@@ -235,6 +243,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | **PAUSED by default** | New campaigns/ad groups/ads created PAUSED. Response carries `status_after_apply` + `next_action_hint` describing how to flip to `ENABLED` via the `enable_entity` MCP tool — zero UI step needed. |
 | **`require_dry_run` hard guard** | When `GOOGLE_ADS_REQUIRE_DRY_RUN=true`, calling `confirm_and_apply` with `dry_run=false` returns `Err(DryRunRequired)` BEFORE any HTTP traffic. Pass `bypass_require_dry_run=true` for a one-shot override. |
 | **Double-confirm hard guard** | Destructive ops flagged `requires_double_confirm` need `confirmed_twice=true` or return `Err(DoubleConfirmRequired)`. |
+| **Policy exemptions are opt-in** | A mutate blocked by an *exemptible* ad policy is never silently exempted. The error names each policy and the exact offending text; pass `exempt_policy_violations=true` to retry the same plan with `exemptPolicyViolationKeys` (what the Google Ads UI does automatically). Applied exemptions are echoed back as `policy_exemptions_requested`. |
 | **MutateOperation whitelist** | Unknown top-level operation keys (typos, recommendation ops mis-routed) are rejected client-side BEFORE the HTTP call with a clear error pointing at the correct tool. |
 | **Blocked operations** | Configure `GOOGLE_ADS_BLOCKED_OPS` to disable specific tools |
 | **Read-only mode** | Set `GOOGLE_ADS_READ_ONLY=true` to disable all writes |
@@ -339,6 +348,11 @@ needed** — the new params are all optional. You can now:
   intentionally want to skip the dry-run guard (one-shot override).
 - Pass `confirmed_twice: true` to `confirm_and_apply` for destructive
   plans flagged `requires_double_confirm`.
+- Pass `exempt_policy_violations: true` to `confirm_and_apply` to request a
+  Google ad policy exemption when a mutate is blocked by an exemptible
+  violation. Required in practice for medical/health keywords, which trip
+  `HEALTH_IN_PERSONALIZED_ADS` (and, for contraception terms, `BIRTH_CONTROL`).
+  Only keywords can be exempted — responsive search ads cannot.
 - Read `status_after_apply` and `next_action_hint` from any draft / apply
   response to know whether a follow-up `enable_entity` call is needed.
 

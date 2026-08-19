@@ -196,8 +196,19 @@ pub fn create_callouts(
     Ok(preview)
 }
 
-/// Known structured snippet header types.
-const VALID_SNIPPET_HEADERS: &[&str] = &[
+/// Structured snippet headers known to be accepted, by language.
+///
+/// The set is **language-specific**, and Google accepts the header in the
+/// account's own language — the reference accounts in this MCC run on
+/// `Serviços`, not `Service catalog`. It is also not a clean translation of the
+/// English list: `Neighborhoods` is accepted while its literal Portuguese form
+/// `Bairros` is not, and accents are significant (`Servicos` is rejected,
+/// `Serviços` is not).
+///
+/// Because of that, this list is **guidance, not a gate** — a header outside it
+/// is still sent, and Google validates it. Verified against the live v23 API.
+const KNOWN_SNIPPET_HEADERS: &[&str] = &[
+    // English
     "Amenities",
     "Brands",
     "Courses",
@@ -211,11 +222,31 @@ const VALID_SNIPPET_HEADERS: &[&str] = &[
     "Shows",
     "Styles",
     "Types",
+    // Portuguese (pt-BR)
+    "Comodidades",
+    "Marcas",
+    "Cursos",
+    "Programas de graduação",
+    "Destinos",
+    "Hotéis em destaque",
+    "Cobertura de seguro",
+    "Modelos",
+    "Serviços",
+    "Shows",
+    "Estilos",
+    "Tipos",
 ];
 
 /// Create structured snippet extensions for a campaign.
 ///
-/// The header must be one of the predefined types recognized by Google Ads.
+/// The header must be one of Google's predefined types **in the account's
+/// language**. Unrecognized headers are not rejected here — they are passed to
+/// Google, which is the authority. When the header is not in
+/// [`KNOWN_SNIPPET_HEADERS`], the preview carries a `header_note` so the caller
+/// can catch a typo before applying.
+///
+/// Google rejects a bad header with `stringFormatError: INVALID_FORMAT` and
+/// does not say which headers are valid, so the note is the useful signal.
 pub fn create_structured_snippets(
     config: &Config,
     customer_id: &str,
@@ -225,12 +256,10 @@ pub fn create_structured_snippets(
 ) -> Result<serde_json::Value> {
     check_blocked_operation("create_structured_snippets", &config.safety)?;
 
-    if !VALID_SNIPPET_HEADERS.contains(&header) {
-        return Err(McpGoogleAdsError::Validation(format!(
-            "Invalid structured snippet header '{}'. Must be one of: {}",
-            header,
-            VALID_SNIPPET_HEADERS.join(", ")
-        )));
+    if header.trim().is_empty() {
+        return Err(McpGoogleAdsError::Validation(
+            "A structured snippet header is required".to_string(),
+        ));
     }
 
     if values.is_empty() {
@@ -270,11 +299,23 @@ pub fn create_structured_snippets(
         }
     }));
 
-    let changes = json!({
+    let mut changes = json!({
         "campaign_id": campaign_id,
         "header": header,
         "values": values
     });
+
+    if !KNOWN_SNIPPET_HEADERS.contains(&header) {
+        changes["header_note"] = json!(format!(
+            "'{}' is not in the list of headers known to this server. Headers are \
+             language-specific and must match the account's language exactly, \
+             accents included. Google will validate it and rejects a bad header \
+             with 'stringFormatError: INVALID_FORMAT' without naming the valid \
+             ones. Known-good values: {}",
+            header,
+            KNOWN_SNIPPET_HEADERS.join(", ")
+        ));
+    }
 
     let plan = ChangePlan::new(
         "create_structured_snippets".to_string(),
@@ -463,8 +504,11 @@ mod tests {
         assert_eq!(preview["operation"], "create_callouts");
     }
 
+    /// A header this server doesn't recognise is NOT a hard error: the set is
+    /// language-specific and Google is the authority. It goes through carrying
+    /// a note so a typo is still visible in the preview.
     #[test]
-    fn test_create_structured_snippets_invalid_header() {
+    fn test_unknown_snippet_header_passes_through_with_note() {
         let config = Config::default();
         let result = create_structured_snippets(
             &config,
@@ -473,9 +517,50 @@ mod tests {
             "InvalidHeader",
             vec!["value1".to_string()],
         );
+        assert!(result.is_ok());
+        let preview = result.ok().unwrap_or_default();
+        let note = preview["changes"]["header_note"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            note.contains("InvalidHeader"),
+            "note should name the header"
+        );
+        assert!(note.contains("language-specific"));
+    }
+
+    /// Regression: the pt-BR header the reference accounts actually use was
+    /// rejected outright by the old English-only whitelist.
+    #[test]
+    fn test_localized_snippet_header_is_accepted_without_note() {
+        let config = Config::default();
+        let result = create_structured_snippets(
+            &config,
+            "123-456-7890",
+            "555",
+            "Serviços",
+            vec!["Consulta".to_string(), "Histeroscopia".to_string()],
+        );
+        assert!(result.is_ok());
+        let preview = result.ok().unwrap_or_default();
+        assert_eq!(preview["changes"]["header"], "Serviços");
+        assert!(
+            preview["changes"]["header_note"].is_null(),
+            "a known header must not be flagged"
+        );
+    }
+
+    #[test]
+    fn test_empty_snippet_header_is_rejected() {
+        let config = Config::default();
+        let result = create_structured_snippets(
+            &config,
+            "123-456-7890",
+            "555",
+            "   ",
+            vec!["value1".to_string()],
+        );
         assert!(result.is_err());
-        let err = result.err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(err.contains("Invalid structured snippet header"));
     }
 
     #[test]

@@ -47,6 +47,7 @@ async fn confirmed_twice_false_blocks_apply() {
             dry_run: false,
             bypass_require_dry_run: false,
             confirmed_twice: false,
+            ..Default::default()
         },
     )
     .await
@@ -84,6 +85,7 @@ async fn confirmed_twice_true_lets_apply_proceed() {
             dry_run: false,
             bypass_require_dry_run: false,
             confirmed_twice: true,
+            ..Default::default()
         },
     )
     .await

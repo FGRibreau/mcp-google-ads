@@ -161,6 +161,67 @@ pub struct AddNegativeKeywordsToolParams {
     pub match_type: Option<String>,
 }
 
+// ── Negative keyword list (shared set) parameter structs ────────────────
+
+/// Parameters for tools that address one negative keyword list.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct NegativeKeywordListParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Numeric ID of the negative keyword list (shared set).
+    pub shared_set_id: String,
+}
+
+/// Parameters for creating a negative keyword list.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct CreateNegativeKeywordListParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Name for the list. Must be unique within the account.
+    pub name: String,
+    /// Keywords to seed the list with. May be empty.
+    pub keywords: Option<Vec<String>>,
+    /// Match type for all keywords (default "PHRASE"). One of: EXACT, PHRASE, BROAD.
+    pub match_type: Option<String>,
+    /// Campaign IDs to attach the new list to. May be empty.
+    pub campaign_ids: Option<Vec<String>>,
+}
+
+/// Parameters for adding keywords to an existing negative keyword list.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct AddToNegativeKeywordListParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Numeric ID of the negative keyword list (shared set).
+    pub shared_set_id: String,
+    /// Keywords to add.
+    pub keywords: Vec<String>,
+    /// Match type for all keywords (default "PHRASE"). One of: EXACT, PHRASE, BROAD.
+    pub match_type: Option<String>,
+}
+
+/// Parameters for removing keywords from a negative keyword list.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RemoveFromNegativeKeywordListParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Numeric ID of the negative keyword list (shared set).
+    pub shared_set_id: String,
+    /// Criterion IDs to remove, as returned by get_negative_keyword_list.
+    pub criterion_ids: Vec<String>,
+}
+
+/// Parameters for attaching/detaching a negative keyword list to campaigns.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct NegativeKeywordListCampaignsParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Numeric ID of the negative keyword list (shared set).
+    pub shared_set_id: String,
+    /// Campaign IDs to attach to / detach from.
+    pub campaign_ids: Vec<String>,
+}
+
 /// Parameters for excluding a geographic location from a campaign.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct ExcludeGeoTargetToolParams {
@@ -183,6 +244,52 @@ pub struct RemoveGeoTargetToolParams {
     /// Geo target constant ID currently targeted — bare numeric ("2276") or full
     /// resource name ("geoTargetConstants/2276").
     pub geo_target_id: String,
+}
+
+/// Parameters for excluding demographic tiers from ad groups.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ExcludeDemographicsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Ad group IDs to exclude the tiers from. Demographic criteria are
+    /// ad-group scoped — there is no campaign-level equivalent — so list every
+    /// ad group the exclusion should cover. Find them with
+    /// `run_gaql("SELECT ad_group.id FROM ad_group WHERE campaign.id = ...")`.
+    pub ad_group_ids: Vec<String>,
+    /// Household income bands to exclude, e.g.
+    /// `["INCOME_RANGE_0_50", "INCOME_RANGE_UNDETERMINED"]` for the common
+    /// "lower 50% + unknown" cut. Bands are percentiles: `INCOME_RANGE_90_UP`
+    /// is the top 10%. Note `INCOME_RANGE_UNDETERMINED` ("Unknown") is often the
+    /// largest bucket in small or rural markets — excluding it can cut a lot of
+    /// volume, so check the distribution first on a small budget.
+    pub income_ranges: Option<Vec<models::IncomeRange>>,
+    /// Age brackets to exclude, e.g. `["AGE_RANGE_18_24", "AGE_RANGE_65_UP"]`.
+    pub age_ranges: Option<Vec<models::AgeRange>>,
+    /// Genders to exclude, e.g. `["GENDER_MALE"]`. At most two of the three.
+    pub genders: Option<Vec<models::Gender>>,
+}
+
+/// Parameters for removing a demographic criterion from an ad group.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct RemoveDemographicCriterionToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The ad group ID holding the criterion.
+    pub ad_group_id: String,
+    /// Fixed criterion ID of the tier — read it from `get_demographics`.
+    /// Income: 510000 Unknown, 510001 lower 50%, 510002-510006 upward.
+    /// Age: 503001-503006 by bracket, 503999 Unknown.
+    /// Gender: 10 male, 11 female, 20 unknown.
+    pub criterion_id: String,
+}
+
+/// Parameters for reading demographic criteria.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct GetDemographicsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Optional campaign ID to scope the read to a single campaign.
+    pub campaign_id: Option<String>,
 }
 
 /// Parameters for setting a campaign's geo target type.
@@ -229,7 +336,9 @@ pub struct CreateSnippetsToolParams {
     pub customer_id: Option<String>,
     /// The campaign ID to add snippets to.
     pub campaign_id: String,
-    /// Snippet header (e.g. Brands, Types, Amenities).
+    /// Snippet header, in the account's language (e.g. "Serviços" on a
+    /// pt-BR account, "Service catalog" on an en account). Must match one of
+    /// Google's predefined headers exactly, accents included.
     pub header: String,
     /// Snippet values.
     pub values: Vec<String>,
@@ -288,6 +397,15 @@ pub struct ConfirmApplyParams {
     /// Acknowledgement for plans flagged `requires_double_confirm`. Without
     /// `confirmed_twice=true`, those plans return an error and do nothing.
     pub confirmed_twice: Option<bool>,
+    /// Request a Google ad policy exemption if the mutate is rejected with
+    /// *exemptible* violations (e.g. `HEALTH_IN_PERSONALIZED_ADS`, which nearly
+    /// every medical/health keyword triggers). The operations are resubmitted
+    /// once with `exemptPolicyViolationKeys` — the same thing the Google Ads UI
+    /// does automatically. Defaults to `false`; when a mutate fails this way the
+    /// error lists the exact policies and offending text, and the plan is kept
+    /// so you can retry with this flag. Only keywords can be exempted —
+    /// responsive search ads cannot.
+    pub exempt_policy_violations: Option<bool>,
 }
 
 /// Parameters for creating a new ad group.
@@ -650,7 +768,9 @@ impl GoogleAdsMcp {
         .await
     }
 
-    #[tool(description = "Get all campaign-level negative keywords.")]
+    #[tool(
+        description = "Get all campaign-level negative keywords. These are negatives written directly on a campaign — exclusions coming from a shared negative keyword list are NOT included here; call list_negative_keyword_lists for those. A campaign's effective exclusions are the union of both."
+    )]
     async fn get_negative_keywords(
         &self,
         Parameters(params): Parameters<CustomerIdParams>,
@@ -658,6 +778,37 @@ impl GoogleAdsMcp {
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         self.run_tool(|client| async move {
             tools::keywords::get_negative_keywords(&client, &cid).await
+        })
+        .await
+    }
+
+    // ── Negative keyword lists / shared sets (read) ────────────────────
+
+    #[tool(
+        description = "List the account's negative keyword lists (shared sets), each with its member count and the campaigns it is attached to. A list with zero attached campaigns excludes nothing."
+    )]
+    async fn list_negative_keyword_lists(
+        &self,
+        Parameters(params): Parameters<CustomerIdParams>,
+    ) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        self.run_tool(|client| async move {
+            tools::shared_sets::list_negative_keyword_lists(&client, &cid).await
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Get the keywords inside one negative keyword list, with the criterion_id of each — the handle remove_from_negative_keyword_list needs."
+    )]
+    async fn get_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<NegativeKeywordListParams>,
+    ) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let shared_set_id = params.shared_set_id;
+        self.run_tool(|client| async move {
+            tools::shared_sets::get_negative_keyword_list(&client, &cid, &shared_set_id).await
         })
         .await
     }
@@ -949,6 +1100,156 @@ impl GoogleAdsMcp {
         }
     }
 
+    // ── Negative keyword lists / shared sets (write) ───────────────────
+
+    #[tool(
+        description = "Create a negative keyword list (shared set) and, in the same atomic mutate, seed it with keywords and attach it to campaigns. Use this instead of repeating the same negatives on every campaign: one list edited once propagates to every campaign it is attached to. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn create_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<CreateNegativeKeywordListParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        let match_type = params.match_type.as_deref().unwrap_or("PHRASE");
+
+        match tools::shared_sets_write::create_negative_keyword_list(
+            &config,
+            &cid,
+            &params.name,
+            params.keywords.unwrap_or_default(),
+            match_type,
+            &params.campaign_ids.unwrap_or_default(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Add keywords to an existing negative keyword list. Adding a keyword the list already holds fails the whole batch — check get_negative_keyword_list first. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_to_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<AddToNegativeKeywordListParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        let match_type = params.match_type.as_deref().unwrap_or("PHRASE");
+
+        match tools::shared_sets_write::add_to_negative_keyword_list(
+            &config,
+            &cid,
+            &params.shared_set_id,
+            params.keywords,
+            match_type,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Remove keywords from a negative keyword list by criterion ID (IRREVERSIBLE). Every campaign using the list loses these exclusions."
+    )]
+    async fn remove_from_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<RemoveFromNegativeKeywordListParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::shared_sets_write::remove_from_negative_keyword_list(
+            &config,
+            &cid,
+            &params.shared_set_id,
+            params.criterion_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Attach a negative keyword list to one or more campaigns. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn attach_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<NegativeKeywordListCampaignsParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::shared_sets_write::attach_negative_keyword_list(
+            &config,
+            &cid,
+            &params.shared_set_id,
+            &params.campaign_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Detach a negative keyword list from one or more campaigns (IRREVERSIBLE link removal). Those campaigns immediately lose every exclusion the list carries; the list itself is kept."
+    )]
+    async fn detach_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<NegativeKeywordListCampaignsParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::shared_sets_write::detach_negative_keyword_list(
+            &config,
+            &cid,
+            &params.shared_set_id,
+            &params.campaign_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Delete a negative keyword list entirely (IRREVERSIBLE). Every campaign attached to it loses those exclusions."
+    )]
+    async fn delete_negative_keyword_list(
+        &self,
+        Parameters(params): Parameters<NegativeKeywordListParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::shared_sets_write::delete_negative_keyword_list(
+            &config,
+            &cid,
+            &params.shared_set_id,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
     #[tool(
         description = "Exclude a geographic location from a campaign (negative location criterion — the inverse of update_campaign's positive geo targeting). Ads stop serving in that location. geo_target_id accepts a bare numeric ID or geoTargetConstants/{id}; find IDs via search_geo_targets. Returns a preview — call confirm_and_apply to execute."
     )]
@@ -1022,6 +1323,73 @@ impl GoogleAdsMcp {
         }
     }
 
+    // ── Demographics ─────────────────────────────────────────────────────
+
+    #[tool(
+        description = "Exclude demographic tiers (household income band, age bracket, gender) from ad groups. Writes one NEGATIVE ad_group_criterion per ad group × tier — excluded users never see the ad, which is absolute, not a bid adjustment. Demographic criteria are ad-group scoped: there is no campaign-level equivalent, so pass every ad group the exclusion should cover. Common clinic cut: income_ranges=[\"INCOME_RANGE_0_50\",\"INCOME_RANGE_UNDETERMINED\"]. If a tier already exists as a POSITIVE row on the ad group the create collides on the shared resource name — clear it first with remove_demographic_criterion. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn exclude_demographics(
+        &self,
+        Parameters(params): Parameters<ExcludeDemographicsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::demographics::exclude_demographics(
+            &config,
+            &cid,
+            &params.ad_group_ids,
+            &params.income_ranges.unwrap_or_default(),
+            &params.age_ranges.unwrap_or_default(),
+            &params.genders.unwrap_or_default(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Remove a demographic criterion from an ad group. Two uses: undoing an exclusion, and clearing a positive row that blocks exclude_demographics. Destructive — removing a negative row re-opens the ad group to that tier — so requires confirmed_twice. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn remove_demographic_criterion(
+        &self,
+        Parameters(params): Parameters<RemoveDemographicCriterionToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::demographics::remove_demographic_criterion(
+            &config,
+            &cid,
+            &params.ad_group_id,
+            &params.criterion_id,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        }
+    }
+
+    #[tool(
+        description = "List the demographic criteria (income band, age bracket, gender) currently on the account's ad groups, positive and negative alike — the `negative` flag distinguishes them. Use it to verify an exclusion landed, or to find a positive row blocking one. Ad groups with no rows do not appear: absence means the ad group serves to everyone, which is the API default and not a misconfiguration."
+    )]
+    async fn get_demographics(
+        &self,
+        Parameters(params): Parameters<GetDemographicsToolParams>,
+    ) -> String {
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let campaign_id = params.campaign_id;
+        self.run_tool(|client| async move {
+            tools::demographics::get_demographics(&client, &cid, campaign_id.as_deref()).await
+        })
+        .await
+    }
+
     #[tool(description = "Draft sitelink extensions for a campaign. Returns a preview.")]
     async fn draft_sitelinks(
         &self,
@@ -1066,7 +1434,9 @@ impl GoogleAdsMcp {
         }
     }
 
-    #[tool(description = "Draft structured snippet extensions for a campaign.")]
+    #[tool(
+        description = "Draft structured snippet extensions for a campaign. The header must be one of Google's predefined types IN THE ACCOUNT'S LANGUAGE (e.g. 'Serviços', not 'Service catalog', on a Portuguese account) — accents included. An unrecognized header is not blocked; it is sent to Google, and the preview carries a header_note listing known-good values."
+    )]
     async fn create_structured_snippets(
         &self,
         Parameters(params): Parameters<CreateSnippetsToolParams>,
@@ -1632,7 +2002,7 @@ impl GoogleAdsMcp {
     // ── Confirm & Apply ─────────────────────────────────────────────────
 
     #[tool(
-        description = "Execute a previously previewed change. IMPORTANT: defaults to dry_run=true. Set dry_run=false to make real changes. If config.safety.require_dry_run is true, dry_run=false will be rejected unless bypass_require_dry_run=true is also set."
+        description = "Execute a previously previewed change. IMPORTANT: defaults to dry_run=true. Set dry_run=false to make real changes. If config.safety.require_dry_run is true, dry_run=false will be rejected unless bypass_require_dry_run=true is also set. If the mutate is rejected by Google ad policy, the error lists the offending text and policy; when those violations are exemptible (common for medical/health keywords), retry the same plan_id with exempt_policy_violations=true."
     )]
     async fn confirm_and_apply(
         &self,
@@ -1649,21 +2019,55 @@ impl GoogleAdsMcp {
             dry_run,
             bypass_require_dry_run: params.bypass_require_dry_run.unwrap_or(false),
             confirmed_twice: params.confirmed_twice.unwrap_or(false),
+            exempt_policy_violations: params.exempt_policy_violations.unwrap_or(false),
         };
 
         match tools::confirm::confirm_and_apply(&config, input).await {
             Ok(result) => result.to_string(),
-            Err(e) => {
-                let hint = gaql::get_error_hint(&e.to_string())
-                    .unwrap_or("No additional hints available.");
-                serde_json::json!({
-                    "error": e.to_string(),
-                    "hint": hint,
-                })
-                .to_string()
-            }
+            Err(e) => error_response(&e).to_string(),
         }
     }
+}
+
+/// Render an error for the MCP client.
+///
+/// Google returns a generic top-level message ("Request contains an invalid
+/// argument") and puts the real cause in `details` as a `GoogleAdsFailure`.
+/// Dropping that, as this server used to, makes rejections undiagnosable — a
+/// policy block and a malformed field look identical. Surface a compact
+/// summary of the underlying errors alongside the message.
+fn error_response(e: &error::McpGoogleAdsError) -> serde_json::Value {
+    // The top-level message is generic ("Request contains an invalid argument");
+    // the specific error code lives in the GoogleAdsFailure details, so fall
+    // back to matching hints against those.
+    let hint = gaql::get_error_hint(&e.to_string())
+        .or_else(|| match e {
+            error::McpGoogleAdsError::GoogleAds { details, .. } => {
+                details.iter().find_map(|d| gaql::get_error_hint(d))
+            }
+            _ => None,
+        })
+        .unwrap_or("No additional hints available.");
+
+    let mut out = serde_json::json!({
+        "error": e.to_string(),
+        "hint": hint,
+    });
+
+    match e {
+        error::McpGoogleAdsError::GoogleAds { details, .. } if !details.is_empty() => {
+            let summary = safety::policy_exemption::summarize_failure(details);
+            if summary["errors"].as_array().is_some_and(|a| !a.is_empty()) {
+                out["failure_details"] = summary;
+            }
+        }
+        error::McpGoogleAdsError::PolicyExemption { violations, .. } => {
+            out["policy_violations"] = violations.clone();
+        }
+        _ => {}
+    }
+
+    out
 }
 
 impl GoogleAdsMcp {
@@ -1762,15 +2166,7 @@ impl GoogleAdsMcp {
 
         match f(client).await {
             Ok(result) => result,
-            Err(e) => {
-                let hint = gaql::get_error_hint(&e.to_string())
-                    .unwrap_or("No additional hints available.");
-                serde_json::json!({
-                    "error": e.to_string(),
-                    "hint": hint,
-                })
-                .to_string()
-            }
+            Err(e) => error_response(&e).to_string(),
         }
     }
 }

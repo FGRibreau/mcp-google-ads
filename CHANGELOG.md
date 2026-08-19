@@ -51,6 +51,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Demographic targeting is now reachable from the server: `exclude_demographics`,
+  `remove_demographic_criterion` and `get_demographics`. Household income band,
+  age bracket and gender exclusions previously had no tool at all, so every
+  campaign built through this server shipped serving to all incomes and all ages
+  — two mandatory items of the clinic playbook silently skipped, discoverable
+  only by noticing their absence later. The gap was being closed by hand-rolled
+  REST calls against the same credentials, which is exactly the workaround a
+  server exists to remove.
+  These are `AdGroupCriterion` rows and are **ad-group scoped** — Google has no
+  campaign-level demographic exclusion — so `exclude_demographics` takes a list
+  of ad group IDs and writes one negative criterion per (ad group × tier).
+  Criteria are created **by type**, never by ID: Google resolves the fixed
+  criterion ID itself. The ID table on the enums exists only for the removal
+  path, where `adGroupCriteria/{ad_group}~{id}` has to be built by hand.
+  Guardrails, each of which prevents a failure that is invisible until it costs
+  money: excluding every tier of a dimension is rejected (it would stop the ad
+  group serving to anyone, which Google accepts without complaint); ad groups and
+  tiers are de-duplicated, because a repeat collides on the shared resource name
+  and fails the whole batch; and a batch over 500 criteria is a hard error rather
+  than a truncation, since a partially applied exclusion reads as done.
+  `remove_demographic_criterion` is `requires_double_confirm` — dropping a
+  negative row silently re-opens the ad group to a tier the advertiser
+  deliberately excluded. It also handles the collision case: a tier already
+  present as an explicit *positive* row must be removed before the negative one
+  can be created, as both share a resource name.
+  The enums carry explicit `#[serde(rename)]` on every variant rather than
+  `rename_all = "SCREAMING_SNAKE_CASE"`. Serde does not insert a separator before
+  a digit, so the derived form of `IncomeRange0_50` is `INCOME_RANGE0_50` — a
+  spelling Google rejects. A table test pins the exact JSON spelling of all
+  seventeen variants against literals so the two representations cannot drift.
+  Note `Gender` is deliberately asymmetric: `GENDER_FEMALE` on the JSON surface,
+  bare `FEMALE` on the wire.
+
+- Negative keyword lists (Google Ads "shared sets") are now addressable. The
+  server previously exposed only campaign-level negatives, so the only way to
+  apply one exclusion set across N campaigns was to write the same keywords N
+  times — 40 words across 5 campaigns meant 200 criteria to keep in sync by
+  hand, and every new campaign started unprotected. Eight tools close that gap:
+  `list_negative_keyword_lists` and `get_negative_keyword_list` (read),
+  `create_negative_keyword_list`, `add_to_negative_keyword_list`,
+  `remove_from_negative_keyword_list`, `attach_negative_keyword_list`,
+  `detach_negative_keyword_list` and `delete_negative_keyword_list` (write).
+  The three underlying `MutateOperation` keys — `sharedSetOperation`,
+  `sharedCriterionOperation`, `campaignSharedSetOperation` — were already in
+  the client whitelist; nothing but the tool surface was missing.
+  `create_negative_keyword_list` emits the set, its keywords and its campaign
+  links as ONE atomic mutate using the temporary resource ID `-1` (the same
+  technique `draft_campaign` uses for budget→campaign→ad group). Splitting them
+  would allow a list attached to campaigns while holding none of its keywords —
+  campaigns that read as protected and are not.
+  Everything that strips live exclusions (`remove_from_…`, `detach_…`,
+  `delete_…`) is flagged `requires_double_confirm`.
+  Input keywords are de-duplicated case-insensitively before submission,
+  because a single repeat would fail the whole atomic batch; the count dropped
+  is reported as `duplicates_dropped` so the edit is never silent. Shared set
+  and campaign IDs are validated as bare integers — they are interpolated into
+  both GAQL and resource names.
+  `get_negative_keywords` keeps returning campaign-level negatives only; its
+  description now says so and points at the new tools, since a campaign's
+  effective exclusions are the union of both mechanisms.
+
+- `confirm_and_apply` gains `exempt_policy_violations` (default `false`).
+  Google rejects many creates with `POLICY_ERROR` and an `isExemptible: true`
+  violation; such an operation is accepted when resubmitted carrying
+  `exemptPolicyViolationKeys`, which is exactly what the Google Ads web UI does
+  automatically. Without it, whole categories of legitimate keywords were
+  simply unaddable through this server: every medical/health term trips
+  `HEALTH_IN_PERSONALIZED_ADS` ("sensitive health information"), and
+  contraception terms additionally trip `BIRTH_CONTROL`. With the flag set, a
+  rejected mutate is retried **once** with an exemption key attached to each
+  offending operation, and the response reports what was exempted under
+  `policy_exemptions_requested` — an exemption is an assertion of eligibility
+  that Google still reviews, so it is never silent and never automatic.
+  Verified against the live v23 API: only `adGroupCriterionOperation` accepts
+  `exemptPolicyViolationKeys`; `campaignCriterionOperation` has no such field,
+  and `adGroupAdOperation.policyValidationParameter` rejects responsive search
+  ads with `UNSUPPORTED_AD_TYPE_FOR_EXEMPT_POLICY_VIOLATION_KEYS`. Violations on
+  operations that cannot be exempted are reported as such instead of being
+  retried pointlessly.
+- `safety::policy_exemption`: parses `policyViolationDetails` out of a
+  `GoogleAdsFailure`, maps each violation to its `mutate_operations` index
+  (treating an absent index as 0, since protobuf JSON omits zero values), and
+  attaches deduplicated exemption keys to the operations that support them.
 - `set_campaign_geo_target_type`: set a campaign's
   `campaign.geo_target_type_setting` — `positive_geo_target_type` and/or
   `negative_geo_target_type` — via a `campaignOperation.update` with a matching
@@ -72,6 +155,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field to inherit as before. Final URLs are validated as absolute `http(s)`
   URLs bounded to 2048 characters (`safety::guards::validate_final_url`).
 
+### Fixed
+
+- `create_structured_snippets` no longer rejects valid non-English headers. The
+  header whitelist was hardcoded to the 13 English values, so it refused
+  `Serviços` — the header the Portuguese accounts in this MCC actually run on —
+  and every other localized form, making the tool unusable outside English
+  accounts. The accepted set is language-specific and is *not* a literal
+  translation (verified live: `Neighborhoods` is valid but `Bairros` is not;
+  `Serviços` is valid but the unaccented `Servicos` is not), so a client-side
+  list can never be authoritative. The list is now guidance: an unrecognized
+  header is passed to Google, which validates it, and the preview carries a
+  `header_note` so a typo is still caught before applying. The known-good set
+  gained the twelve verified pt-BR headers. An empty header is still rejected.
+- Error hints now also match against the `GoogleAdsFailure` details, not just
+  the top-level message. Google's generic `"Request contains an invalid
+  argument."` never contained the error code the hints key on, so hints could
+  effectively only fire for GAQL query errors. Added a hint for the structured
+  snippet header, which Google rejects with a bare
+  `stringFormatError: INVALID_FORMAT` that never names the valid values.
+- Error responses now include the underlying `GoogleAdsFailure` instead of
+  discarding it. Google puts a generic `"Request contains an invalid argument."`
+  at the top level and the actual cause — error code, field path, offending
+  text, policy details — in `error.details`, which this server parsed into
+  `McpGoogleAdsError::GoogleAds.details` and then never rendered. Every
+  rejection therefore looked identical, and a policy block was indistinguishable
+  from a malformed field. Responses now carry a compact `failure_details`
+  summary (capped at 25 errors, with a `truncated` count beyond that), and
+  policy rejections carry `policy_violations` naming each policy and the exact
+  text that tripped it.
+- Removed two debug writes in `client.mutate` that dumped every request body and
+  error body to hardcoded `/tmp/mcp-google-ads-last-{request,error}.json`. They
+  silently no-opped on Windows and, on Unix, wrote full mutate payloads to a
+  world-readable path on every call.
+
 ### Changed (BREAKING)
 
 - `tools::campaigns_write::KeywordInput` and
@@ -79,6 +196,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `final_url: Option<String>` field. Rust library callers constructing these
   structs must add `final_url: None` (or `Some(url)`). MCP-tool callers are
   unaffected — the new field is optional in the tool schema.
+- `tools::confirm::ConfirmApplyInput` gains an `exempt_policy_violations: bool`
+  field. Rust library callers constructing it literally should add
+  `..Default::default()`. MCP-tool callers are unaffected — the new parameter is
+  optional and defaults to `false`, preserving existing behaviour.
 
 ## [0.6.2] - 2026-07-15
 
