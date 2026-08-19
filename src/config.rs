@@ -149,6 +149,23 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// `Config::load` reads process-wide environment variables, and the harness
+    /// runs tests as concurrent threads inside one process. Without
+    /// serialisation, one test's `remove_var` lands between another's
+    /// `set_var` and its `Config::load`, so the second reads a value it never
+    /// set. Every test that drives `Config::load` through the environment takes
+    /// this lock.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// A panicking test must not wedge the others, so a poisoned lock is
+    /// recovered instead of propagated.
+    fn env_guard() -> MutexGuard<'static, ()> {
+        ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     #[test]
     fn test_default_config() {
@@ -203,6 +220,8 @@ mod tests {
 
     #[test]
     fn test_load_defaults() {
+        let _env = env_guard();
+
         // Clear any env vars that could interfere
         std::env::remove_var("GOOGLE_ADS_DEVELOPER_TOKEN");
         std::env::remove_var("GOOGLE_ADS_CUSTOMER_ID");
@@ -224,6 +243,8 @@ mod tests {
 
     #[test]
     fn test_load_from_env() {
+        let _env = env_guard();
+
         std::env::set_var("GOOGLE_ADS_DEVELOPER_TOKEN", "test-dev-token");
         std::env::set_var("GOOGLE_ADS_CUSTOMER_ID", "123-456-7890");
         std::env::set_var("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "999-888-7777");
@@ -296,6 +317,8 @@ mod tests {
 
     #[test]
     fn test_login_customer_id_empty_string() {
+        let _env = env_guard();
+
         std::env::set_var("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "");
         let config = Config::load().unwrap();
         assert!(config.ads.login_customer_id.is_none());
