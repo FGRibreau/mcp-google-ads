@@ -5,6 +5,36 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-08-19
+
+### Added
+
+- `apply_recommendation` accepts the `apply_parameters` oneof. Google's
+  `ApplyRecommendationOperation` carries 22 type-specific parameter variants,
+  and several recommendation types cannot be applied without the matching one —
+  the operation has to say *what* to apply: which assets to attach for
+  `SITELINK_ASSET`, which amount for `CAMPAIGN_BUDGET`. The server only ever
+  sent a bare `resourceName`, so those types were unreachable through the MCP.
+  Pass a single-key object naming one variant, for example
+  `{"campaignBudget": {"newBudgetAmountMicros": "15000000"}}`. Omitting it keeps
+  the previous behaviour: Google applies the values it recommended.
+  The payload is checked client-side against the documented key list — a oneof
+  takes exactly one key, and an undocumented key is refused before any HTTP
+  traffic rather than spent on a round trip that fails opaquely.
+
+### Fixed
+
+- Partial failures now surface what actually went wrong. `recommendations:apply`
+  and `googleAds:mutate` report per-operation errors as HTTP 200 with a
+  `partialFailureError` body, and everything actionable in it — the request id,
+  the failing field path, the error code — lives in `details`, which the error's
+  `Display` dropped. Callers saw only the top-level sentence.
+  This mattered most in the case that produced it: when Google answers with an
+  error code the negotiated API version cannot name, it degrades the code to
+  `UNKNOWN` and the message to "The error code is not in this version.", which
+  on its own is a dead end. That case is now spelled out as a version mismatch,
+  with the API version that answered and the request id to quote to support.
+
 ## [0.9.0] - 2026-08-19
 
 ### Added
