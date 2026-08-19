@@ -602,26 +602,23 @@ fn apply_bidding_strategy_update(
 
     match strategy {
         "MAXIMIZE_CONVERSIONS" => {
-            let mut mc = json!({});
-            if let Some(cpa) = target_cpa {
-                mc.as_object_mut().map(|m| {
-                    m.insert(
-                        "targetCpaMicros".to_string(),
-                        json!(dollars_to_micros(cpa).to_string()),
-                    )
-                });
-            }
-            obj.insert("maximizeConversions".to_string(), mc);
-            update_mask_fields.push("maximizeConversions".to_string());
+            // target_cpa_micros = 0 means "no target CPA", which is how the API
+            // expresses plain Maximize Conversions.
+            let cpa_micros = target_cpa.map(dollars_to_micros).unwrap_or(0);
+            obj.insert(
+                "maximizeConversions".to_string(),
+                json!({ "targetCpaMicros": cpa_micros.to_string() }),
+            );
+            update_mask_fields.push("maximize_conversions.target_cpa_micros".to_string());
         }
         "MAXIMIZE_CONVERSION_VALUE" => {
-            let mut mcv = json!({});
-            if let Some(roas) = target_roas {
-                mcv.as_object_mut()
-                    .map(|m| m.insert("targetRoas".to_string(), json!(roas)));
-            }
-            obj.insert("maximizeConversionValue".to_string(), mcv);
-            update_mask_fields.push("maximizeConversionValue".to_string());
+            // target_roas = 0 means "no target ROAS".
+            let roas = target_roas.unwrap_or(0.0);
+            obj.insert(
+                "maximizeConversionValue".to_string(),
+                json!({ "targetRoas": roas }),
+            );
+            update_mask_fields.push("maximize_conversion_value.target_roas".to_string());
         }
         "TARGET_CPA" => {
             if let Some(cpa) = target_cpa {
@@ -629,18 +626,21 @@ fn apply_bidding_strategy_update(
                     "targetCpa".to_string(),
                     json!({ "targetCpaMicros": dollars_to_micros(cpa).to_string() }),
                 );
-                update_mask_fields.push("targetCpa".to_string());
+                update_mask_fields.push("target_cpa.target_cpa_micros".to_string());
             }
         }
         "TARGET_ROAS" => {
             if let Some(roas) = target_roas {
                 obj.insert("targetRoas".to_string(), json!({ "targetRoas": roas }));
-                update_mask_fields.push("targetRoas".to_string());
+                update_mask_fields.push("target_roas.target_roas".to_string());
             }
         }
         "MANUAL_CPC" => {
-            obj.insert("manualCpc".to_string(), json!({}));
-            update_mask_fields.push("manualCpc".to_string());
+            obj.insert(
+                "manualCpc".to_string(),
+                json!({ "enhancedCpcEnabled": false }),
+            );
+            update_mask_fields.push("manual_cpc.enhanced_cpc_enabled".to_string());
         }
         _ => {
             obj.insert("biddingStrategyType".to_string(), json!(strategy));
@@ -998,6 +998,66 @@ mod tests {
         let mut campaign2 = json!({"name": "test"});
         apply_bidding_strategy(&mut campaign2, "MANUAL_CPC", None, None);
         assert!(campaign2.get("manualCpc").is_some());
+    }
+
+    /// The API rejects a field mask naming a message that has subfields
+    /// (`FIELD_HAS_SUBFIELDS`), so every bidding strategy must mask the leaf.
+    #[test]
+    fn test_apply_bidding_strategy_update_masks_leaf_fields() {
+        let cases = [
+            ("TARGET_ROAS", None, Some(17.0), "target_roas.target_roas"),
+            (
+                "TARGET_CPA",
+                Some(50.0),
+                None,
+                "target_cpa.target_cpa_micros",
+            ),
+            (
+                "MAXIMIZE_CONVERSIONS",
+                Some(50.0),
+                None,
+                "maximize_conversions.target_cpa_micros",
+            ),
+            (
+                "MAXIMIZE_CONVERSIONS",
+                None,
+                None,
+                "maximize_conversions.target_cpa_micros",
+            ),
+            (
+                "MAXIMIZE_CONVERSION_VALUE",
+                None,
+                Some(8.0),
+                "maximize_conversion_value.target_roas",
+            ),
+            (
+                "MAXIMIZE_CONVERSION_VALUE",
+                None,
+                None,
+                "maximize_conversion_value.target_roas",
+            ),
+            ("MANUAL_CPC", None, None, "manual_cpc.enhanced_cpc_enabled"),
+        ];
+
+        for (strategy, cpa, roas, expected_mask) in cases {
+            let mut campaign = json!({});
+            let mut mask = Vec::new();
+            apply_bidding_strategy_update(&mut campaign, &mut mask, strategy, cpa, roas);
+            assert_eq!(mask, vec![expected_mask.to_string()], "strategy {strategy}");
+            assert!(
+                mask[0].contains('.'),
+                "{strategy} masked a parent message, which the API rejects"
+            );
+        }
+    }
+
+    #[test]
+    fn test_apply_bidding_strategy_update_target_roas_value() {
+        let mut campaign = json!({});
+        let mut mask = Vec::new();
+        apply_bidding_strategy_update(&mut campaign, &mut mask, "TARGET_ROAS", None, Some(17.0));
+        assert_eq!(campaign["targetRoas"]["targetRoas"], json!(17.0));
+        assert_eq!(mask, vec!["target_roas.target_roas".to_string()]);
     }
 
     /// Return the sole `campaignOperation` from a stored plan for inspection.
