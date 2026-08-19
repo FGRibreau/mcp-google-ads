@@ -4,5 +4,3 @@ credentials.json
 .envrc
 .claude
 dogfood-output/
-
-__pycache__/
