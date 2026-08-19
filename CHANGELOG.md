@@ -5,6 +5,34 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-08-19
+
+### Fixed
+
+- `run_gaql` with `format=table` or `format=csv` rendered blank cells for every
+  field whose path contains a multi-word segment. GAQL SELECT clauses are written
+  in snake_case (`metrics.cost_micros`, `ad_group_criterion.keyword.text`) while
+  the API answers in camelCase (`{"metrics": {"costMicros": …}}`), and the field
+  resolver only ever tried the literal snake_case key. Single-word segments
+  (`campaign.name`, `metrics.clicks`) resolved, everything else came back empty,
+  so the output looked structurally valid while silently dropping keyword text,
+  match types, final URLs, quality-score components, resource names and
+  `cost_micros`.
+
+  The failure mode was worse than a missing column. A `change_event` query
+  rendered as a table printed blank rows, which reads as "no recent changes on
+  the account" — the opposite of the truth. That report is what tells a caller
+  whether a change has already been applied, so a silent blank could lead to the
+  same mutation being applied twice.
+
+  Each path segment is now looked up literally first, then in its camelCase form,
+  so snake_case payloads keep resolving and the fallback only engages when the
+  literal key is absent. `format=json` was never affected.
+
+  The existing tests missed this because their fixtures were written in
+  snake_case, a shape the API never returns. The new tests use payloads copied
+  from real API responses.
+
 ## [0.8.0] - 2026-08-09
 
 ### Added

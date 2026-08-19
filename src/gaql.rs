@@ -21,17 +21,49 @@ pub fn parse_select_fields(query: &str) -> Vec<String> {
         .collect()
 }
 
+/// Convert one snake_case GAQL field segment to the camelCase key the Google Ads
+/// API uses in its JSON payloads: `cost_micros` -> `costMicros`.
+fn snake_to_camel(segment: &str) -> String {
+    let mut out = String::with_capacity(segment.len());
+    let mut capitalize_next = false;
+
+    for ch in segment.chars() {
+        if ch == '_' {
+            capitalize_next = true;
+        } else if capitalize_next {
+            out.extend(ch.to_uppercase());
+            capitalize_next = false;
+        } else {
+            out.push(ch);
+        }
+    }
+
+    out
+}
+
 /// Resolve a dotted field path in a JSON value.
 /// For example, "campaign.name" in {"campaign": {"name": "My Campaign"}} -> "My Campaign"
+///
+/// GAQL SELECT clauses are written in snake_case (`metrics.cost_micros`) while the
+/// API answers in camelCase (`{"metrics": {"costMicros": …}}`), so each segment is
+/// looked up literally first and then in its camelCase form. Without the fallback
+/// every field with a multi-word segment resolved to an empty string, and the table
+/// and CSV renderers printed blank cells with no error.
 fn resolve_field(row: &serde_json::Value, field: &str) -> String {
     let parts: Vec<&str> = field.split('.').collect();
     let mut current = row;
 
     for part in &parts {
-        match current.get(part) {
-            Some(v) => current = v,
-            None => return String::new(),
-        }
+        current = match current.get(part) {
+            Some(v) => v,
+            None => {
+                let camel = snake_to_camel(part);
+                match current.get(camel.as_str()) {
+                    Some(v) => v,
+                    None => return String::new(),
+                }
+            }
+        };
     }
 
     match current {
@@ -364,5 +396,117 @@ mod tests {
         let csv = format_csv(&rows, &fields);
         // Double quotes should be escaped as ""
         assert!(csv.contains("\"Say \"\"hello\"\"\""));
+    }
+
+    /// A row shaped the way the Google Ads API actually returns it: GAQL SELECT
+    /// fields are snake_case, the JSON payload is camelCase. Every field whose
+    /// path has a multi-word segment must still resolve.
+    #[test]
+    fn test_resolve_field_accepts_camel_case_payload() {
+        let row = serde_json::json!({
+            "adGroupCriterion": {
+                "keyword": {"text": "webhook api", "matchType": "PHRASE"},
+                "qualityInfo": {"postClickQualityScore": "BELOW_AVERAGE"}
+            },
+            "metrics": {"costMicros": "177389137", "allConversions": 3}
+        });
+
+        assert_eq!(
+            resolve_field(&row, "ad_group_criterion.keyword.text"),
+            "webhook api"
+        );
+        assert_eq!(
+            resolve_field(&row, "ad_group_criterion.keyword.match_type"),
+            "PHRASE"
+        );
+        assert_eq!(
+            resolve_field(
+                &row,
+                "ad_group_criterion.quality_info.post_click_quality_score"
+            ),
+            "BELOW_AVERAGE"
+        );
+        assert_eq!(resolve_field(&row, "metrics.cost_micros"), "177389137");
+        assert_eq!(resolve_field(&row, "metrics.all_conversions"), "3");
+    }
+
+    /// snake_case payloads must keep resolving — the camelCase lookup is a
+    /// fallback, not a replacement.
+    #[test]
+    fn test_resolve_field_still_accepts_snake_case_payload() {
+        let row = serde_json::json!({"metrics": {"cost_micros": "42", "all_conversions": 7}});
+        assert_eq!(resolve_field(&row, "metrics.cost_micros"), "42");
+        assert_eq!(resolve_field(&row, "metrics.all_conversions"), "7");
+    }
+
+    #[test]
+    fn test_resolve_field_absent_stays_empty() {
+        let row = serde_json::json!({"metrics": {"costMicros": "42"}});
+        assert_eq!(resolve_field(&row, "metrics.nope_not_here"), "");
+        assert_eq!(resolve_field(&row, "campaign.name"), "");
+    }
+
+    /// The failure this guards against is silent: a change_event rendered as a
+    /// table used to print blank rows, which reads as "no changes on the
+    /// account" — the opposite of the truth — and that report is what decides
+    /// whether an already-applied change gets applied twice.
+    #[test]
+    fn test_format_table_change_event_is_never_blank() {
+        let rows = vec![serde_json::json!({
+            "changeEvent": {
+                "changeDateTime": "2026-08-17 05:23:04.551871",
+                "changeResourceType": "CAMPAIGN_CRITERION",
+                "resourceChangeOperation": "CREATE",
+                "userEmail": "someone@example.com"
+            }
+        })];
+        let fields = vec![
+            "change_event.change_date_time".to_string(),
+            "change_event.change_resource_type".to_string(),
+            "change_event.resource_change_operation".to_string(),
+            "change_event.user_email".to_string(),
+        ];
+
+        let table = format_table(&rows, &fields);
+        assert!(table.contains("2026-08-17"), "date missing:\n{table}");
+        assert!(
+            table.contains("CAMPAIGN_CRITERION"),
+            "resource type missing:\n{table}"
+        );
+        assert!(table.contains("CREATE"), "operation missing:\n{table}");
+        assert!(
+            table.contains("someone@example.com"),
+            "user email missing:\n{table}"
+        );
+    }
+
+    #[test]
+    fn test_format_csv_camel_case_payload() {
+        let rows = vec![serde_json::json!({
+            "searchTermView": {"searchTerm": "webhook postman"},
+            "metrics": {"costMicros": "2790000"}
+        })];
+        let fields = vec![
+            "search_term_view.search_term".to_string(),
+            "metrics.cost_micros".to_string(),
+        ];
+
+        let csv = format_csv(&rows, &fields);
+        assert!(
+            csv.contains("webhook postman"),
+            "search term missing:\n{csv}"
+        );
+        assert!(csv.contains("2790000"), "cost missing:\n{csv}");
+    }
+
+    #[test]
+    fn test_snake_to_camel() {
+        assert_eq!(snake_to_camel("cost_micros"), "costMicros");
+        assert_eq!(snake_to_camel("ad_group_criterion"), "adGroupCriterion");
+        assert_eq!(snake_to_camel("name"), "name");
+        assert_eq!(snake_to_camel(""), "");
+        // A trailing underscore must not panic nor swallow characters.
+        assert_eq!(snake_to_camel("trailing_"), "trailing");
+        assert_eq!(snake_to_camel("_leading"), "Leading");
     }
 }
