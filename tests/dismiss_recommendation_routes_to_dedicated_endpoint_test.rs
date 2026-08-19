@@ -1,5 +1,5 @@
 //! `dismiss_recommendation` must POST to `recommendations:dismiss`, NOT to
-//! `googleAds:mutate`. v23 has no `dismissRecommendationOperation` key on
+//! `googleAds:mutate`. v25 has no `dismissRecommendationOperation` key on
 //! `MutateOperation` — the v0.2.x code routed it through mutate and got 400s.
 
 mod common;
@@ -12,9 +12,9 @@ use wiremock::{Mock, ResponseTemplate};
 async fn dismiss_recommendation_hits_dedicated_endpoint() {
     let (mock, client) = common::spawn_mock_google_ads().await;
 
-    // Expected: POST /v23/customers/1234567890/recommendations:dismiss
+    // Expected: POST /v25/customers/1234567890/recommendations:dismiss
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/recommendations:dismiss"))
+        .and(path("/v25/customers/1234567890/recommendations:dismiss"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": [{ "resourceName": "customers/1234567890/recommendations/REC1" }]
         })))
@@ -24,7 +24,7 @@ async fn dismiss_recommendation_hits_dedicated_endpoint() {
 
     // Catch-all: if anything hits mutate, fail loudly.
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/googleAds:mutate"))
+        .and(path("/v25/customers/1234567890/googleAds:mutate"))
         .respond_with(ResponseTemplate::new(500).set_body_string("MUST NOT HIT MUTATE"))
         .expect(0)
         .mount(&mock)
@@ -45,7 +45,7 @@ async fn dismiss_recommendation_sends_resource_names_in_body() {
 
     // Verify the body contains the resource name under operations[].resourceName.
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/recommendations:dismiss"))
+        .and(path("/v25/customers/1234567890/recommendations:dismiss"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "results": []
         })))
@@ -72,7 +72,7 @@ async fn mutate_endpoint_must_not_be_hit_by_dismiss() {
     // mutate either. Any POST will fail with 404 from wiremock unmatched.
     // We assert directly: any request beyond the expected one fails the test.
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/recommendations:dismiss"))
+        .and(path("/v25/customers/1234567890/recommendations:dismiss"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"results": []})))
         .expect(1)
         .mount(&mock)

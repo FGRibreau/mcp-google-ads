@@ -9,13 +9,13 @@ use crate::models::{AdStatus, NextActionHint};
 
 /// Discriminator that tells `confirm_and_apply` how to dispatch this plan.
 ///
-/// - `MutateOperations` (default) -> POST `/v23/customers/{cid}/googleAds:mutate`
-/// - `ApplyRecommendation` -> POST `/v23/customers/{cid}/recommendations:apply`
-/// - `DismissRecommendation` -> POST `/v23/customers/{cid}/recommendations:dismiss`
+/// - `MutateOperations` (default) -> POST `/v25/customers/{cid}/googleAds:mutate`
+/// - `ApplyRecommendation` -> POST `/v25/customers/{cid}/recommendations:apply`
+/// - `DismissRecommendation` -> POST `/v25/customers/{cid}/recommendations:dismiss`
 ///
 /// The recommendation variants exist because `applyRecommendationOperation` and
 /// `dismissRecommendationOperation` are NOT valid `MutateOperation` keys in
-/// Google Ads v23 — they live on dedicated RPCs.
+/// Google Ads v25 — they live on dedicated RPCs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanDispatch {

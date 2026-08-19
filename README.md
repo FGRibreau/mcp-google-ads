@@ -15,7 +15,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2021-orange.svg)](https://rust-lang.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-green.svg)](https://modelcontextprotocol.io)
-[![Google Ads API](https://img.shields.io/badge/Google%20Ads%20API-v23-4285F4.svg)](https://developers.google.com/google-ads/api)
+[![Google Ads API](https://img.shields.io/badge/Google%20Ads%20API-v25-4285F4.svg)](https://developers.google.com/google-ads/api)
 
 </div>
 
@@ -282,7 +282,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | | **mcp-google-ads** (this) | [adloop](https://github.com/kLOsk/adloop) | [mikdeangelis](https://github.com/mikdeangelis/mcp-google-ads) | [grantweston](https://github.com/grantweston/google-ads-mcp-complete) | [Official Google](https://github.com/googleads/google-ads-mcp) |
 |---|---|---|---|---|---|
 | **Language** | Rust | Python | Python | Python | Python |
-| **API version** | v23 | v23 | v23 | v21 | v23 |
+| **API version** | v25 | v25 | v25 | v21 | v25 |
 | **Total tools** | 50 | 43 | 52 | 63 | 2 |
 | **Write tools** | 32 | 16 | 26 | 25 | 0 |
 | **Tests** | 322 | partial | 0 | 0 | N/A |

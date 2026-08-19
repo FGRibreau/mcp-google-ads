@@ -20,7 +20,7 @@
 use serde_json::{json, Value};
 
 /// Operation keys that accept `exemptPolicyViolationKeys`, verified against
-/// the live v23 API:
+/// the live API:
 ///
 /// - `adGroupCriterionOperation` — supported (keywords).
 /// - `campaignCriterionOperation` — the field does not exist on this operation
@@ -299,14 +299,14 @@ pub fn summarize_failure(details: &[String]) -> Value {
 mod tests {
     use super::*;
 
-    /// Real shape of a HEALTH_IN_PERSONALIZED_ADS rejection (v23).
+    /// Real shape of a HEALTH_IN_PERSONALIZED_ADS rejection (v25).
     fn health_failure(index: Option<u64>, text: &str, exemptible: bool) -> String {
         let mut path = json!({"fieldName": "mutate_operations"});
         if let Some(i) = index {
             path["index"] = json!(i);
         }
         json!({
-            "@type": "type.googleapis.com/google.ads.googleads.v23.errors.GoogleAdsFailure",
+            "@type": "type.googleapis.com/google.ads.googleads.v25.errors.GoogleAdsFailure",
             "errors": [{
                 "errorCode": {"policyViolationError": "POLICY_ERROR"},
                 "message": "A policy was violated. See PolicyViolationDetails for more detail.",

@@ -16,7 +16,7 @@ async fn partial_failure_error_is_reported_as_failure_and_plan_retained() {
     let mock = wiremock::MockServer::start().await;
     // HTTP 200, but the body carries a partialFailureError (gRPC code 3).
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/googleAds:mutate"))
+        .and(path("/v25/customers/1234567890/googleAds:mutate"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "mutateOperationResponses": [],
             "partialFailureError": {
@@ -29,7 +29,7 @@ async fn partial_failure_error_is_reported_as_failure_and_plan_retained() {
         .mount(&mock)
         .await;
 
-    std::env::set_var("GOOGLE_ADS_API_BASE_URL", format!("{}/v23", mock.uri()));
+    std::env::set_var("GOOGLE_ADS_API_BASE_URL", format!("{}/v25", mock.uri()));
 
     let log_file = PathBuf::from("/tmp/__test_audit_partial_failure__.log");
     let _ = std::fs::remove_file(&log_file);

@@ -21,7 +21,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 async fn mock_mutate_ok() -> MockServer {
     let mock = MockServer::start().await;
     Mock::given(method("POST"))
-        .and(path("/v23/customers/1234567890/googleAds:mutate"))
+        .and(path("/v25/customers/1234567890/googleAds:mutate"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "mutateOperationResponses": [
                 {"sharedSetResult": {"resourceName": "customers/1234567890/sharedSets/555"}}
@@ -50,7 +50,7 @@ async fn only_request_body(mock: &MockServer) -> serde_json::Value {
 #[tokio::test]
 async fn create_list_applies_as_one_atomic_mutate() {
     let mock = mock_mutate_ok().await;
-    std::env::set_var("GOOGLE_ADS_API_BASE_URL", format!("{}/v23", mock.uri()));
+    std::env::set_var("GOOGLE_ADS_API_BASE_URL", format!("{}/v25", mock.uri()));
 
     let config = test_config();
     let preview = create_negative_keyword_list(

@@ -9,7 +9,7 @@ use crate::error::{McpGoogleAdsError, Result};
 /// Overridable at construction via [`GoogleAdsClient::with_base_url`] or via
 /// the `GOOGLE_ADS_API_BASE_URL` environment variable. The override is the
 /// hook used by integration tests to point the client at a `wiremock` server.
-pub const DEFAULT_BASE_URL: &str = "https://googleads.googleapis.com/v23";
+pub const DEFAULT_BASE_URL: &str = "https://googleads.googleapis.com/v25";
 
 /// Environment variable that, when set, overrides the API base URL.
 ///
@@ -18,14 +18,21 @@ pub const DEFAULT_BASE_URL: &str = "https://googleads.googleapis.com/v23";
 /// they don't need credentials files.
 pub const BASE_URL_ENV: &str = "GOOGLE_ADS_API_BASE_URL";
 
-/// Whitelist of top-level `MutateOperation` keys accepted by Google Ads v23.
+/// Whitelist of top-level `MutateOperation` keys accepted by Google Ads v25.
 ///
 /// `mutate_operations` payloads with any key not in this list are rejected
 /// client-side before any HTTP traffic — this is the guard that catches
 /// `dismissRecommendationOperation` / `applyRecommendationOperation` mistakes
 /// (those operations live on dedicated RPCs, not on `googleAds:mutate`).
 ///
-/// Source: Google Ads API v23 `MutateOperation.operation` oneof definition.
+/// The feed-based extension operations (`feedOperation`, `campaignFeedOperation`,
+/// `extensionFeedItemOperation`, the `*ExtensionSettingOperation` family, …) are
+/// deliberately absent: Google removed them with the sunset of feed-based
+/// extensions, and probing the live API with `validateOnly` answers "Unknown
+/// name" for each on both v23 and v25. This server writes extensions through
+/// `assetOperation` / `campaignAssetOperation` instead.
+///
+/// Source: Google Ads API v25 `MutateOperation.operation` oneof definition.
 pub const VALID_MUTATE_OPERATION_KEYS: &[&str] = &[
     "adGroupAdLabelOperation",
     "adGroupAdOperation",
@@ -35,8 +42,6 @@ pub const VALID_MUTATE_OPERATION_KEYS: &[&str] = &[
     "adGroupCriterionLabelOperation",
     "adGroupCriterionOperation",
     "adGroupCustomizerOperation",
-    "adGroupExtensionSettingOperation",
-    "adGroupFeedOperation",
     "adGroupLabelOperation",
     "adGroupOperation",
     "adOperation",
@@ -60,8 +65,6 @@ pub const VALID_MUTATE_OPERATION_KEYS: &[&str] = &[
     "campaignCriterionOperation",
     "campaignCustomizerOperation",
     "campaignDraftOperation",
-    "campaignExtensionSettingOperation",
-    "campaignFeedOperation",
     "campaignGroupOperation",
     "campaignLabelOperation",
     "campaignOperation",
@@ -75,27 +78,19 @@ pub const VALID_MUTATE_OPERATION_KEYS: &[&str] = &[
     "customerAssetOperation",
     "customerConversionGoalOperation",
     "customerCustomizerOperation",
-    "customerExtensionSettingOperation",
-    "customerFeedOperation",
     "customerLabelOperation",
     "customerNegativeCriterionOperation",
     "customerOperation",
     "customizerAttributeOperation",
     "experimentArmOperation",
     "experimentOperation",
-    "extensionFeedItemOperation",
-    "feedItemOperation",
-    "feedItemSetLinkOperation",
-    "feedItemSetOperation",
-    "feedItemTargetOperation",
-    "feedMappingOperation",
-    "feedOperation",
     "keywordPlanAdGroupKeywordOperation",
     "keywordPlanAdGroupOperation",
     "keywordPlanCampaignKeywordOperation",
     "keywordPlanCampaignOperation",
     "keywordPlanOperation",
     "labelOperation",
+    "recommendationSubscriptionOperation",
     "remarketingActionOperation",
     "sharedCriterionOperation",
     "sharedSetOperation",
@@ -358,7 +353,7 @@ impl GoogleAdsClient {
                     return Err(format!(
                         "Unknown MutateOperation key '{}' at index {}. Recommendation operations \
                          must use apply_recommendations / dismiss_recommendations — they are NOT \
-                         valid keys on googleAds:mutate in v23.",
+                         valid keys on googleAds:mutate in v25.",
                         key, idx
                     ));
                 }
@@ -631,7 +626,7 @@ mod tests {
     #[test]
     fn test_with_base_url() {
         let cfg = Config::default();
-        let client = GoogleAdsClient::with_base_url(&cfg, "http://localhost:9999/v23").unwrap();
-        assert_eq!(client.base_url(), "http://localhost:9999/v23");
+        let client = GoogleAdsClient::with_base_url(&cfg, "http://localhost:9999/v25").unwrap();
+        assert_eq!(client.base_url(), "http://localhost:9999/v25");
     }
 }

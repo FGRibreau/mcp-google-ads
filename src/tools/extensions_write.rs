@@ -206,7 +206,7 @@ pub fn create_callouts(
 /// `Serviços` is not).
 ///
 /// Because of that, this list is **guidance, not a gate** — a header outside it
-/// is still sent, and Google validates it. Verified against the live v23 API.
+/// is still sent, and Google validates it. Verified against the live API.
 const KNOWN_SNIPPET_HEADERS: &[&str] = &[
     // English
     "Amenities",

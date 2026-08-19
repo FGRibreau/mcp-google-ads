@@ -41,7 +41,7 @@ pub fn test_config() -> Config {
 /// ready-to-use client.
 pub async fn spawn_mock_google_ads() -> (MockServer, GoogleAdsClient) {
     let mock = MockServer::start().await;
-    let base_url = format!("{}/v23", mock.uri());
+    let base_url = format!("{}/v25", mock.uri());
     let config = test_config();
     let client = GoogleAdsClient::with_base_url(&config, base_url).unwrap();
     (mock, client)
