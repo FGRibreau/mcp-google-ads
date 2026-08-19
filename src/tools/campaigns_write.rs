@@ -1091,7 +1091,10 @@ mod tests {
         let mut mask = Vec::new();
         apply_bidding_strategy_update(&mut campaign, &mut mask, "MAXIMIZE_CONVERSIONS", None, None);
 
-        assert_eq!(campaign["maximizeConversions"]["targetCpaMicros"], json!("0"));
+        assert_eq!(
+            campaign["maximizeConversions"]["targetCpaMicros"],
+            json!("0")
+        );
         assert_eq!(
             mask,
             vec!["maximizeConversions.targetCpaMicros".to_string()]

@@ -184,10 +184,6 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
-
-
-
-
     #[test]
     fn test_add_audience_targeting_success() {
         let config = Config::default();
@@ -210,7 +206,6 @@ mod tests {
         let result = add_audience_targeting(&config, "123-456-7890", "555", "999", "INVALID");
         assert!(result.is_err());
     }
-
 
     #[test]
     fn test_add_audience_targeting_blocked() {
