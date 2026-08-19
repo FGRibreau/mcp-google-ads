@@ -487,19 +487,6 @@ pub struct CreatePmaxCampaignToolParams {
     pub start_paused: Option<bool>,
 }
 
-/// Parameters for creating a custom audience.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
-pub struct CreateCustomAudienceToolParams {
-    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
-    pub customer_id: Option<String>,
-    /// Name for the audience.
-    pub audience_name: String,
-    /// Audience type: WEBSITE_VISITORS or CUSTOMER_MATCH.
-    pub audience_type: String,
-    /// URL patterns or rules for the audience.
-    pub urls_or_rules: Vec<String>,
-}
-
 /// Parameters for adding audience targeting to a campaign.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct AddAudienceTargetingToolParams {
@@ -1664,31 +1651,6 @@ impl GoogleAdsMcp {
     }
 
     // ── Phase 5: Audiences ──────────────────────────────────────────────
-
-    #[tool(
-        description = "Create a custom audience (WEBSITE_VISITORS or CUSTOMER_MATCH). Returns a preview."
-    )]
-    async fn create_custom_audience(
-        &self,
-        Parameters(params): Parameters<CreateCustomAudienceToolParams>,
-    ) -> String {
-        if let Some(err) = self.check_write_allowed() {
-            return err;
-        }
-        let cid = self.resolve_customer_id(params.customer_id.as_deref());
-        let config = self.config.clone();
-
-        match tools::audiences::create_custom_audience(
-            &config,
-            &cid,
-            &params.audience_name,
-            &params.audience_type,
-            params.urls_or_rules,
-        ) {
-            Ok(preview) => preview.to_string(),
-            Err(e) => e.to_json().to_string(),
-        }
-    }
 
     #[tool(
         description = "Add audience targeting (TARGETING or OBSERVATION) to a campaign. Returns a preview."

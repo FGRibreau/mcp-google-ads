@@ -213,7 +213,6 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `create_structured_snippets` | Structured snippet extensions |
 | `remove_extension` | Remove a campaign extension (destructive) |
 | `create_pmax_campaign` | Performance Max campaign with text assets |
-| `create_custom_audience` | Remarketing / customer match audiences |
 | `add_audience_targeting` | Target audiences (TARGETING/OBSERVATION) |
 | `create_portfolio_bidding_strategy` | Portfolio bidding (CPA, ROAS, impression share) |
 | `create_conversion_action` | Create a conversion action for server-side click uploads (UPLOAD_CLICKS, gclid-based) |
