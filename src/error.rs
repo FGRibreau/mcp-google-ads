@@ -49,21 +49,34 @@ impl McpGoogleAdsError {
     /// `FIELD_HAS_SUBFIELDS`) in `details`, which the `Display` impl drops.
     /// Pull those out so tool responses can carry them.
     pub fn api_error_messages(&self) -> Vec<String> {
-        let Self::GoogleAds { details, .. } = self else {
-            return Vec::new();
-        };
-        details
-            .iter()
-            .flat_map(
-                |detail| match serde_json::from_str::<serde_json::Value>(detail) {
-                    Ok(parsed) => match parsed.get("errors").and_then(|e| e.as_array()) {
-                        Some(errors) => errors.iter().map(format_api_error).collect(),
-                        None => vec![detail.clone()],
+        match self {
+            Self::GoogleAds { details, .. } => details
+                .iter()
+                .flat_map(
+                    |detail| match serde_json::from_str::<serde_json::Value>(detail) {
+                        Ok(parsed) => {
+                            messages_from_failure(&parsed).unwrap_or_else(|| vec![detail.clone()])
+                        }
+                        Err(_) => vec![detail.clone()],
                     },
-                    Err(_) => vec![detail.clone()],
-                },
-            )
-            .collect()
+                )
+                .collect(),
+            // A partial failure arrives as HTTP 200 with the real errors buried
+            // in `details`. Without this arm the caller only ever saw the
+            // top-level sentence, which for an unknown code says nothing at all.
+            Self::PartialFailure(payload) => payload
+                .get("details")
+                .and_then(|d| d.as_array())
+                .map(|details| {
+                    details
+                        .iter()
+                        .filter_map(messages_from_failure)
+                        .flatten()
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
     }
 
     /// Error payload for a tool response, including the API's own details.
@@ -84,20 +97,112 @@ impl McpGoogleAdsError {
     }
 }
 
-/// Render one `GoogleAdsError` as "message [errorCode=value]".
-fn format_api_error(error: &serde_json::Value) -> String {
-    let message = error.get("message").and_then(|m| m.as_str()).unwrap_or("");
+/// Pull the per-operation errors out of one `GoogleAdsFailure` block, tagging
+/// each with the request id — the only handle Google support accepts — and
+/// with the API version that produced them. Returns `None` when the block is
+/// not a failure envelope, so callers can fall back to the raw text.
+fn messages_from_failure(detail: &serde_json::Value) -> Option<Vec<String>> {
+    let errors = detail.get("errors")?.as_array()?;
+    let request_id = detail.get("requestId").and_then(|r| r.as_str());
+    let api_version = detail
+        .get("@type")
+        .and_then(|t| t.as_str())
+        .and_then(api_version_from_type);
+    Some(
+        errors
+            .iter()
+            .map(|error| format_api_error(error, request_id, api_version))
+            .collect(),
+    )
+}
+
+/// `type.googleapis.com/google.ads.googleads.v25.errors.GoogleAdsFailure` → `v25`.
+/// Reading it off the response beats hardcoding a constant: it reports the
+/// version Google actually answered in, which is the one that could not name
+/// the error code.
+fn api_version_from_type(type_url: &str) -> Option<&str> {
+    type_url
+        .split('.')
+        .find(|seg| seg.starts_with('v') && seg[1..].chars().all(|c| c.is_ascii_digit()))
+}
+
+/// True when Google could not name the error code — either it sent no code at
+/// all, or every field of it degrades to `UNKNOWN`/`UNSPECIFIED`. That happens
+/// when the failure belongs to a newer API version than the one requested, and
+/// it is precisely the case where the bare message helps nobody.
+fn code_is_unnameable(error: &serde_json::Value) -> bool {
     match error.get("errorCode").and_then(|c| c.as_object()) {
-        Some(code) => {
-            let code = code
-                .iter()
-                .map(|(k, v)| format!("{k}={}", v.as_str().unwrap_or_default()))
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("{message} [{code}]")
-        }
-        None => message.to_string(),
+        Some(code) if !code.is_empty() => code.values().all(|v| {
+            matches!(v.as_str(), Some("UNKNOWN") | Some("UNSPECIFIED"))
+                || v.as_object().map(|o| o.is_empty()).unwrap_or(false)
+        }),
+        _ => true,
     }
+}
+
+/// Render the failing field path as `operations[0]` / `campaign.name`.
+fn field_path(error: &serde_json::Value) -> Option<String> {
+    let elements = error
+        .get("location")?
+        .get("fieldPathElements")?
+        .as_array()?;
+    let rendered: Vec<String> = elements
+        .iter()
+        .filter_map(|el| {
+            let name = el.get("fieldName")?.as_str()?;
+            Some(match el.get("index").and_then(|i| i.as_i64()) {
+                Some(i) => format!("{name}[{i}]"),
+                None => name.to_string(),
+            })
+        })
+        .collect();
+    match rendered.is_empty() {
+        true => None,
+        false => Some(rendered.join(".")),
+    }
+}
+
+/// Render one `GoogleAdsError` as "message [errorCode=value] at path (requestId=…)",
+/// expanding the unnameable-code case into something the caller can act on.
+fn format_api_error(
+    error: &serde_json::Value,
+    request_id: Option<&str>,
+    api_version: Option<&str>,
+) -> String {
+    let mut out = error
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if let Some(code) = error.get("errorCode").and_then(|c| c.as_object()) {
+        let code = code
+            .iter()
+            .map(|(k, v)| format!("{k}={}", v.as_str().unwrap_or_default()))
+            .collect::<Vec<_>>()
+            .join(",");
+        out.push_str(&format!(" [{code}]"));
+    }
+
+    if let Some(path) = field_path(error) {
+        out.push_str(&format!(" at {path}"));
+    }
+
+    if code_is_unnameable(error) {
+        let version = api_version.unwrap_or("requested");
+        out.push_str(&format!(
+            " — Google returned an error code the {version} API version cannot name, \
+             so the real reason is hidden rather than absent. The usual cause is a \
+             request missing the type-specific parameters that operation requires; \
+             quote the request id to Google support to have it named."
+        ));
+    }
+
+    if let Some(id) = request_id {
+        out.push_str(&format!(" (requestId={id})"));
+    }
+
+    out
 }
 
 pub type Result<T> = std::result::Result<T, McpGoogleAdsError>;
