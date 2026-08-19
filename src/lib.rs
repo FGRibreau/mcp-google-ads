@@ -891,7 +891,7 @@ impl GoogleAdsMcp {
             params.status,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -916,7 +916,7 @@ impl GoogleAdsMcp {
             params.ad_rotation_mode,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -958,7 +958,7 @@ impl GoogleAdsMcp {
             status: params.status,
         }) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -981,7 +981,7 @@ impl GoogleAdsMcp {
         let budget_resource_name: Option<String> = if params.daily_budget.is_some() {
             let client = match GoogleAdsClient::new(&config) {
                 Ok(c) => c,
-                Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
+                Err(e) => return e.to_json().to_string(),
             };
             match tools::campaigns_write::resolve_campaign_budget_resource(
                 &client,
@@ -991,7 +991,7 @@ impl GoogleAdsMcp {
             .await
             {
                 Ok(rn) => Some(rn),
-                Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
+                Err(e) => return e.to_json().to_string(),
             }
         } else {
             None
@@ -1012,7 +1012,7 @@ impl GoogleAdsMcp {
             },
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1041,7 +1041,7 @@ impl GoogleAdsMcp {
             status: params.status,
         }) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1070,7 +1070,7 @@ impl GoogleAdsMcp {
 
         match tools::keywords_write::draft_keywords(&config, &cid, &params.ad_group_id, keywords) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1096,7 +1096,7 @@ impl GoogleAdsMcp {
             match_type,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1270,7 +1270,7 @@ impl GoogleAdsMcp {
             &params.geo_target_id,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1294,7 +1294,7 @@ impl GoogleAdsMcp {
             &params.geo_target_id,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1319,7 +1319,7 @@ impl GoogleAdsMcp {
             params.negative_geo_target_type,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1408,7 +1408,7 @@ impl GoogleAdsMcp {
             params.sitelinks,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1430,7 +1430,7 @@ impl GoogleAdsMcp {
             params.callouts,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1455,7 +1455,7 @@ impl GoogleAdsMcp {
             params.values,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1480,7 +1480,7 @@ impl GoogleAdsMcp {
             &params.field_type,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1504,7 +1504,7 @@ impl GoogleAdsMcp {
             params.criterion_ids,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1528,7 +1528,7 @@ impl GoogleAdsMcp {
             params.criterion_ids,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1550,7 +1550,7 @@ impl GoogleAdsMcp {
         match tools::entity_lifecycle::pause_entity(&config, &cid, &params.entity_type, &entity_id)
         {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1572,7 +1572,7 @@ impl GoogleAdsMcp {
         match tools::entity_lifecycle::enable_entity(&config, &cid, &params.entity_type, &entity_id)
         {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1596,7 +1596,7 @@ impl GoogleAdsMcp {
         match tools::entity_lifecycle::remove_entity(&config, &cid, &params.entity_type, &entity_id)
         {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1631,7 +1631,7 @@ impl GoogleAdsMcp {
             start_paused,
         }) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1658,7 +1658,7 @@ impl GoogleAdsMcp {
             params.urls_or_rules,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1683,7 +1683,7 @@ impl GoogleAdsMcp {
             &params.targeting_mode,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1711,7 +1711,7 @@ impl GoogleAdsMcp {
             params.target_roas,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1737,7 +1737,7 @@ impl GoogleAdsMcp {
             params.new_bid,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1762,7 +1762,7 @@ impl GoogleAdsMcp {
             &params.final_url,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1786,7 +1786,7 @@ impl GoogleAdsMcp {
             &params.image_data_base64,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1808,7 +1808,7 @@ impl GoogleAdsMcp {
             &params.text_content,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1834,7 +1834,7 @@ impl GoogleAdsMcp {
             params.schedules,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1914,7 +1914,7 @@ impl GoogleAdsMcp {
             window,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1938,7 +1938,7 @@ impl GoogleAdsMcp {
             params.primary,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1972,7 +1972,7 @@ impl GoogleAdsMcp {
         match tools::recommendations::apply_recommendation(&config, &cid, &params.recommendation_id)
         {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -1995,7 +1995,7 @@ impl GoogleAdsMcp {
             &params.recommendation_id,
         ) {
             Ok(preview) => preview.to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => e.to_json().to_string(),
         }
     }
 
@@ -2049,10 +2049,11 @@ fn error_response(e: &error::McpGoogleAdsError) -> serde_json::Value {
         })
         .unwrap_or("No additional hints available.");
 
-    let mut out = serde_json::json!({
-        "error": e.to_string(),
-        "hint": hint,
-    });
+    // Start from the error's own JSON so `error_code` and `api_errors` — the
+    // API's field-level reasons — are carried too, then layer the hint and the
+    // structured failure summary on top.
+    let mut out = e.to_json();
+    out["hint"] = serde_json::json!(hint);
 
     match e {
         error::McpGoogleAdsError::GoogleAds { details, .. } if !details.is_empty() => {

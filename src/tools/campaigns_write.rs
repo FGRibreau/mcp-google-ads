@@ -609,25 +609,23 @@ fn apply_bidding_strategy_update(
 
     match strategy {
         "MAXIMIZE_CONVERSIONS" => {
-            let mut mc = json!({});
-            if let Some(cpa) = target_cpa {
-                mc.as_object_mut().map(|m| {
-                    m.insert(
-                        "targetCpaMicros".to_string(),
-                        json!(dollars_to_micros(cpa).to_string()),
-                    )
-                });
-            }
-            obj.insert("maximizeConversions".to_string(), mc);
+            // Send the target explicitly so the masked leaf always exists.
+            // 0 means "no target CPA" — how the API expresses plain Maximize
+            // Conversions.
+            let cpa_micros = target_cpa.map(dollars_to_micros).unwrap_or(0);
+            obj.insert(
+                "maximizeConversions".to_string(),
+                json!({ "targetCpaMicros": cpa_micros.to_string() }),
+            );
             update_mask_fields.push("maximizeConversions.targetCpaMicros".to_string());
         }
         "MAXIMIZE_CONVERSION_VALUE" => {
-            let mut mcv = json!({});
-            if let Some(roas) = target_roas {
-                mcv.as_object_mut()
-                    .map(|m| m.insert("targetRoas".to_string(), json!(roas)));
-            }
-            obj.insert("maximizeConversionValue".to_string(), mcv);
+            // 0 means "no target ROAS".
+            let roas = target_roas.unwrap_or(0.0);
+            obj.insert(
+                "maximizeConversionValue".to_string(),
+                json!({ "targetRoas": roas }),
+            );
             update_mask_fields.push("maximizeConversionValue.targetRoas".to_string());
         }
         "TARGET_CPA" => {
@@ -1073,6 +1071,31 @@ mod tests {
 
         assert_eq!(campaign["manualCpc"]["enhancedCpcEnabled"], json!(false));
         assert!(campaign.get("biddingStrategyType").is_none());
+    }
+
+    /// The masked leaf must carry the caller's value, not merely exist.
+    #[test]
+    fn test_target_roas_update_sets_masked_value() {
+        let mut campaign = json!({"resourceName": "customers/1/campaigns/2"});
+        let mut mask = Vec::new();
+        apply_bidding_strategy_update(&mut campaign, &mut mask, "TARGET_ROAS", None, Some(17.0));
+
+        assert_eq!(campaign["targetRoas"]["targetRoas"], json!(17.0));
+        assert_eq!(mask, vec!["targetRoas.targetRoas".to_string()]);
+    }
+
+    /// Maximize Conversions with no target still sends a leaf to mask (0 = no target).
+    #[test]
+    fn test_maximize_conversions_without_target_sends_zero_leaf() {
+        let mut campaign = json!({"resourceName": "customers/1/campaigns/2"});
+        let mut mask = Vec::new();
+        apply_bidding_strategy_update(&mut campaign, &mut mask, "MAXIMIZE_CONVERSIONS", None, None);
+
+        assert_eq!(campaign["maximizeConversions"]["targetCpaMicros"], json!("0"));
+        assert_eq!(
+            mask,
+            vec!["maximizeConversions.targetCpaMicros".to_string()]
+        );
     }
 
     /// Return the sole `campaignOperation` from a stored plan for inspection.
