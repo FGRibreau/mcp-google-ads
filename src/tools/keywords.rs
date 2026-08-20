@@ -1,5 +1,5 @@
 use crate::client::GoogleAdsClient;
-use crate::error::Result;
+use crate::error::{McpGoogleAdsError, Result};
 use crate::gaql;
 
 /// Get keyword-level performance metrics.
@@ -45,13 +45,35 @@ pub async fn get_keyword_performance(
     serde_json::to_string_pretty(&result).map_err(Into::into)
 }
 
+/// Rows a single search-terms report returns when the caller does not say.
+/// Matches the previously hardcoded value, so omitting `limit` is a no-op.
+const DEFAULT_SEARCH_TERMS_LIMIT: u32 = 200;
+
+/// Hard ceiling on the row count, so a caller cannot ask for an unbounded
+/// response that neither side can handle.
+const MAX_SEARCH_TERMS_LIMIT: u32 = 10_000;
+
 /// Get search terms report showing actual user queries that triggered ads.
 pub async fn get_search_terms(
     client: &GoogleAdsClient,
     customer_id: &str,
     date_start: Option<&str>,
     date_end: Option<&str>,
+    limit: Option<u32>,
 ) -> Result<String> {
+    // The report is unbounded by nature — a broad campaign produces thousands
+    // of distinct queries — so the row count is always capped, and a caller who
+    // asks for an impossible one is told rather than quietly served the default.
+    let limit = match limit {
+        None => DEFAULT_SEARCH_TERMS_LIMIT,
+        Some(n) if (1..=MAX_SEARCH_TERMS_LIMIT).contains(&n) => n,
+        Some(n) => {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "limit must be between 1 and {MAX_SEARCH_TERMS_LIMIT}, got {n}"
+            )));
+        }
+    };
+
     let date_clause = match (date_start, date_end) {
         (Some(s), Some(e)) => gaql::date_clause(s, e),
         _ => "segments.date DURING LAST_30_DAYS".to_string(),
@@ -69,8 +91,8 @@ pub async fn get_search_terms(
         FROM search_term_view \
         WHERE {} \
         ORDER BY metrics.clicks DESC \
-        LIMIT 200",
-        date_clause
+        LIMIT {}",
+        date_clause, limit
     );
 
     let mut rows = client.search(customer_id, &query).await?;
