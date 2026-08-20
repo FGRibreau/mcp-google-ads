@@ -29,7 +29,7 @@ async fn apply_recommendation_hits_dedicated_endpoint() {
 
     let resource_names = vec!["customers/1234567890/recommendations/REC1".to_string()];
     let response = client
-        .apply_recommendations("1234567890", resource_names)
+        .apply_recommendations("1234567890", resource_names, None)
         .await
         .expect("apply call should succeed against mock");
 
@@ -51,6 +51,7 @@ async fn apply_recommendation_body_carries_partial_failure_flag() {
         .apply_recommendations(
             "1234567890",
             vec!["customers/1234567890/recommendations/X".to_string()],
+            None,
         )
         .await
         .unwrap();

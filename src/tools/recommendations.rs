@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::client::GoogleAdsClient;
+use crate::client::{validate_apply_parameters, GoogleAdsClient};
 use crate::config::Config;
 use crate::error::Result;
 use crate::safety::guards::check_blocked_operation;
@@ -42,8 +42,15 @@ pub fn apply_recommendation(
     config: &Config,
     customer_id: &str,
     recommendation_id: &str,
+    apply_parameters: Option<serde_json::Value>,
 ) -> Result<serde_json::Value> {
     check_blocked_operation("apply_recommendation", &config.safety)?;
+
+    // Reject a malformed payload while the caller still has it in hand, rather
+    // than at confirm time when the mistake sits a plan_id away from its cause.
+    if let Some(ref parameters) = apply_parameters {
+        validate_apply_parameters(parameters)?;
+    }
 
     let cid = GoogleAdsClient::normalize_customer_id(customer_id);
     let resource_name = format!("customers/{}/recommendations/{}", cid, recommendation_id);
@@ -52,6 +59,7 @@ pub fn apply_recommendation(
         "recommendation_id": recommendation_id,
         "action": "APPLY",
         "resource_name": resource_name,
+        "apply_parameters": apply_parameters,
     });
 
     let plan = ChangePlan::new(
@@ -65,6 +73,7 @@ pub fn apply_recommendation(
     )
     .with_dispatch(PlanDispatch::ApplyRecommendation {
         resource_names: vec![resource_name],
+        apply_parameters,
     });
 
     let preview = plan.to_preview();
@@ -123,7 +132,7 @@ mod tests {
     #[test]
     fn test_apply_recommendation_success() {
         let config = Config::default();
-        let result = apply_recommendation(&config, "123-456-7890", "rec-123");
+        let result = apply_recommendation(&config, "123-456-7890", "rec-123", None);
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "apply_recommendation");
@@ -133,13 +142,19 @@ mod tests {
     #[test]
     fn test_apply_recommendation_uses_dedicated_dispatch() {
         let config = Config::default();
-        let preview = apply_recommendation(&config, "123-456-7890", "rec-d1").unwrap();
+        let preview = apply_recommendation(&config, "123-456-7890", "rec-d1", None).unwrap();
         let plan_id = preview["plan_id"].as_str().unwrap();
         let plan = get_plan(plan_id).unwrap();
         match plan.dispatch {
-            PlanDispatch::ApplyRecommendation { resource_names } => {
+            PlanDispatch::ApplyRecommendation {
+                resource_names,
+                apply_parameters,
+            } => {
                 assert_eq!(resource_names.len(), 1);
                 assert!(resource_names[0].ends_with("/recommendations/rec-d1"));
+                // Nothing was supplied, so nothing must be invented: an empty
+                // object would be a different request than no parameters.
+                assert!(apply_parameters.is_none());
             }
             other => panic!("expected ApplyRecommendation dispatch, got {:?}", other),
         }
@@ -152,7 +167,7 @@ mod tests {
     fn test_apply_recommendation_blocked() {
         let mut config = Config::default();
         config.safety.blocked_operations = vec!["apply_recommendation".to_string()];
-        let result = apply_recommendation(&config, "123-456-7890", "rec-123");
+        let result = apply_recommendation(&config, "123-456-7890", "rec-123", None);
         assert!(result.is_err());
     }
 
@@ -192,7 +207,7 @@ mod tests {
     #[test]
     fn test_apply_recommendation_entity_id() {
         let config = Config::default();
-        let result = apply_recommendation(&config, "123-456-7890", "rec-789");
+        let result = apply_recommendation(&config, "123-456-7890", "rec-789", None);
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["entity_id"], "rec-789");

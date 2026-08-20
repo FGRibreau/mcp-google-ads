@@ -221,7 +221,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `upload_image_asset` | Upload base64-encoded image |
 | `upload_text_asset` | Create reusable text asset |
 | `set_campaign_schedule` | Ad scheduling / dayparting |
-| `apply_recommendation` | Apply a Google recommendation |
+| `apply_recommendation` | Apply a Google recommendation, optionally with type-specific `apply_parameters` |
 | `dismiss_recommendation` | Dismiss a recommendation |
 | `pause_entity` | Pause campaign/ad group/ad/keyword |
 | `enable_entity` | Enable paused entity |

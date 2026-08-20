@@ -614,6 +614,35 @@ pub struct RecommendationActionToolParams {
     pub recommendation_id: String,
 }
 
+/// Parameters for applying a recommendation.
+///
+/// Separate from [`RecommendationActionToolParams`] because dismissing takes
+/// no payload: a dismiss is the same operation whatever the recommendation
+/// type, while an apply may need to say what to apply.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+pub struct ApplyRecommendationToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Recommendation resource ID.
+    pub recommendation_id: String,
+    /// Type-specific `apply_parameters`, as a single-key object naming one
+    /// variant of the oneof — for example
+    /// `{"campaignBudget": {"newBudgetAmountMicros": "15000000"}}` or
+    /// `{"sitelinkAsset": {"adAssetApplyParameters": {"newAssets": [...],
+    /// "scope": "CAMPAIGN"}}}`.
+    ///
+    /// Omit it to let Google apply the values it recommended. Supply it for
+    /// the types that cannot be applied from a bare resource name, or to
+    /// override what Google proposed. Valid keys: callAsset, callExtension,
+    /// calloutAsset, calloutExtension, campaignBudget, forecastingSetTargetCpa,
+    /// forecastingSetTargetRoas, keyword, leadFormAsset, lowerTargetRoas,
+    /// moveUnusedBudget, raiseTargetCpa, raiseTargetCpaBidTooLow,
+    /// responsiveSearchAd, responsiveSearchAdAsset,
+    /// responsiveSearchAdImproveAdStrength, sitelinkAsset, sitelinkExtension,
+    /// targetCpaOptIn, targetRoasOptIn, textAd, useBroadMatchKeyword.
+    pub apply_parameters: Option<serde_json::Value>,
+}
+
 /// Parameters for removing a campaign asset (extension).
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct RemoveExtensionToolParams {
@@ -2000,11 +2029,11 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Apply a recommendation. Returns a preview — call confirm_and_apply to execute."
+        description = "Apply a recommendation, optionally with type-specific apply_parameters. Returns a preview — call confirm_and_apply to execute."
     )]
     async fn apply_recommendation(
         &self,
-        Parameters(params): Parameters<RecommendationActionToolParams>,
+        Parameters(params): Parameters<ApplyRecommendationToolParams>,
     ) -> String {
         if let Some(err) = self.check_write_allowed() {
             return err;
@@ -2012,8 +2041,12 @@ impl GoogleAdsMcp {
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         let config = self.config.clone();
 
-        match tools::recommendations::apply_recommendation(&config, &cid, &params.recommendation_id)
-        {
+        match tools::recommendations::apply_recommendation(
+            &config,
+            &cid,
+            &params.recommendation_id,
+            params.apply_parameters,
+        ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
         }

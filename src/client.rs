@@ -98,6 +98,94 @@ pub const VALID_MUTATE_OPERATION_KEYS: &[&str] = &[
     "userListOperation",
 ];
 
+/// The `apply_parameters` oneof on `ApplyRecommendationOperation`, in the
+/// camelCase spelling the REST surface expects.
+///
+/// Several recommendation types cannot be applied from a bare `resourceName`:
+/// the operation needs the parameters that say *what* to apply — which assets
+/// to attach for `SITELINK_ASSET`, which amount for `CAMPAIGN_BUDGET`, and so
+/// on. Sending the operation without them returns an error whose code Google
+/// cannot even name back at us, so the payload is checked here rather than
+/// spent on a round trip.
+///
+/// Source: Google Ads API v25 `ApplyRecommendationOperation.apply_parameters`
+/// oneof. `AdAssetApplyParameters` is deliberately absent — it is the shared
+/// inner type of the three asset variants, not a variant itself.
+pub const APPLY_RECOMMENDATION_PARAMETER_KEYS: &[&str] = &[
+    "callAsset",
+    "callExtension",
+    "calloutAsset",
+    "calloutExtension",
+    "campaignBudget",
+    "forecastingSetTargetCpa",
+    "forecastingSetTargetRoas",
+    "keyword",
+    "leadFormAsset",
+    "lowerTargetRoas",
+    "moveUnusedBudget",
+    "raiseTargetCpa",
+    "raiseTargetCpaBidTooLow",
+    "responsiveSearchAd",
+    "responsiveSearchAdAsset",
+    "responsiveSearchAdImproveAdStrength",
+    "sitelinkAsset",
+    "sitelinkExtension",
+    "targetCpaOptIn",
+    "targetRoasOptIn",
+    "textAd",
+    "useBroadMatchKeyword",
+];
+
+/// An `apply_parameters` payload is bounded so a malformed caller cannot push
+/// an unbounded blob at the API. Well above the largest documented variant,
+/// which tops out at a handful of assets.
+const MAX_APPLY_PARAMETERS_BYTES: usize = 64 * 1024;
+
+/// Check an `apply_parameters` payload against the oneof contract: an object
+/// carrying exactly one documented key.
+///
+/// `oneof` means exactly one — zero says nothing, and two would leave Google
+/// to pick, which is not a decision to delegate silently.
+pub fn validate_apply_parameters(parameters: &serde_json::Value) -> Result<()> {
+    let Some(object) = parameters.as_object() else {
+        return Err(McpGoogleAdsError::Validation(format!(
+            "apply_parameters must be an object carrying exactly one of: {}",
+            APPLY_RECOMMENDATION_PARAMETER_KEYS.join(", ")
+        )));
+    };
+
+    match object.len() {
+        1 => {}
+        n => {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "apply_parameters is a oneof and takes exactly one key, got {n}. Valid keys: {}",
+                APPLY_RECOMMENDATION_PARAMETER_KEYS.join(", ")
+            )));
+        }
+    }
+
+    for key in object.keys() {
+        if !APPLY_RECOMMENDATION_PARAMETER_KEYS.contains(&key.as_str()) {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "`{key}` is not an apply_parameters key on ApplyRecommendationOperation. \
+                 Valid keys: {}",
+                APPLY_RECOMMENDATION_PARAMETER_KEYS.join(", ")
+            )));
+        }
+    }
+
+    let size = serde_json::to_string(parameters)
+        .map(|s| s.len())
+        .unwrap_or(0);
+    if size > MAX_APPLY_PARAMETERS_BYTES {
+        return Err(McpGoogleAdsError::Validation(format!(
+            "apply_parameters is {size} bytes, over the {MAX_APPLY_PARAMETERS_BYTES} byte limit"
+        )));
+    }
+
+    Ok(())
+}
+
 /// A single mutate operation for the Google Ads API.
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -418,7 +506,12 @@ impl GoogleAdsClient {
         &self,
         customer_id: &str,
         resource_names: Vec<String>,
+        apply_parameters: Option<serde_json::Value>,
     ) -> Result<ApplyRecommendationResponse> {
+        if let Some(ref parameters) = apply_parameters {
+            validate_apply_parameters(parameters)?;
+        }
+
         let normalized_id = Self::normalize_customer_id(customer_id);
         let url = format!(
             "{}/customers/{}/recommendations:apply",
@@ -428,7 +521,21 @@ impl GoogleAdsClient {
 
         let operations: Vec<serde_json::Value> = resource_names
             .iter()
-            .map(|rn| serde_json::json!({ "resourceName": rn }))
+            .map(|rn| {
+                let mut operation = serde_json::json!({ "resourceName": rn });
+                // The parameters sit beside `resourceName` on the operation, not
+                // under a wrapper — `apply_parameters` is a oneof on
+                // ApplyRecommendationOperation itself.
+                if let (Some(target), Some(source)) = (
+                    operation.as_object_mut(),
+                    apply_parameters.as_ref().and_then(|p| p.as_object()),
+                ) {
+                    for (key, value) in source {
+                        target.insert(key.clone(), value.clone());
+                    }
+                }
+                operation
+            })
             .collect();
 
         let body = serde_json::json!({
