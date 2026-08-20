@@ -5,6 +5,30 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-08-20
+
+### Fixed
+
+- Tool parameters that a tool does not define are now rejected instead of
+  ignored. serde skips unknown fields by default, so a caller passing `days: 2`
+  to a tool that only understands `date_range_start`/`date_range_end` got a
+  successful answer computed over the *default* window, with nothing to signal
+  the mistake — the reply looked exactly like the one that was asked for.
+  That silently produced a wrong reading of a live campaign: two windows
+  believed to be 14 and 2 days were both 30, and the comparison drawn between
+  them was therefore meaningless. All 46 tool parameter structs now carry
+  `deny_unknown_fields`, and the error names the offending key alongside the
+  ones the tool accepts.
+
+### Added
+
+- `get_search_terms` takes a `limit` (1 to 10000, default 200). The row cap was
+  hardcoded at 200, which is both unaskable-for and unreadable: the report is
+  unbounded by nature — a broad campaign produces thousands of distinct queries
+  — and 200 rows of it run to well over 100 KB. An out-of-range value is
+  refused client-side rather than clamped, so the caller is never quietly
+  served something other than what they asked for.
+
 ## [0.10.1] - 2026-08-20
 
 ### Security
