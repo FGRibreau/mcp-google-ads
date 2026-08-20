@@ -5,6 +5,24 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-08-20
+
+### Security
+
+- `rustls-webpki` 0.103.12 to 0.103.14 (GHSA-82j2-j2ch-gfr8) and `quinn-proto`
+  0.11.14 to 0.11.17 (GHSA-4w2j-m93h-cj5j), both transitive. Neither advisory
+  was reachable here: `quinn` is resolved in the lockfile but never compiled
+  into the binary, and the `rustls-webpki` panic needs CRL parsing, which
+  rustls does not perform unless a revocation check is configured. Bumped
+  anyway, since both are patch releases and the shipped binaries otherwise
+  carry the flagged versions.
+
+  The third open advisory, GHSA-89vp-x53w-74fx on `rmcp`, is left alone. It
+  affects the Streamable HTTP server transport; this server enables only
+  `transport-io` and serves over stdio, so the vulnerable code is not compiled.
+  Its fix lands in rmcp 1.4.0, a major jump from 0.16 that deserves its own
+  change rather than riding along with a security patch.
+
 ## [0.10.0] - 2026-08-19
 
 ### Added
