@@ -25,6 +25,7 @@ pub struct GoogleAdsMcp {
 
 /// Parameters for tools that accept an optional customer ID and optional date range.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DateRangeParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -34,8 +35,27 @@ pub struct DateRangeParams {
     pub date_range_end: Option<String>,
 }
 
+/// Parameters for the search terms report.
+///
+/// Separate from [`DateRangeParams`] because this report is the one that can
+/// return thousands of rows: it needs a row cap the caller can set.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SearchTermsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Start date YYYY-MM-DD. Both dates must be given, or the default
+    /// 30-day window applies.
+    pub date_range_start: Option<String>,
+    /// End date YYYY-MM-DD.
+    pub date_range_end: Option<String>,
+    /// Rows to return, ordered by clicks descending. 1 to 10000, default 200.
+    pub limit: Option<u32>,
+}
+
 /// Parameters for tools that accept only an optional customer ID.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CustomerIdParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -43,6 +63,7 @@ pub struct CustomerIdParams {
 
 /// Parameters for run_gaql tool.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RunGaqlParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -54,6 +75,7 @@ pub struct RunGaqlParams {
 
 /// Parameters for search_geo_targets tool.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SearchGeoParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -65,6 +87,7 @@ pub struct SearchGeoParams {
 
 /// Parameters for drafting a new campaign.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DraftCampaignToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -95,6 +118,7 @@ pub struct DraftCampaignToolParams {
 
 /// Parameters for updating an existing campaign.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateCampaignToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -116,6 +140,7 @@ pub struct UpdateCampaignToolParams {
 
 /// Parameters for drafting a Responsive Search Ad.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DraftRsaToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -139,6 +164,7 @@ pub struct DraftRsaToolParams {
 
 /// Parameters for drafting keyword additions.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DraftKeywordsToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -150,6 +176,7 @@ pub struct DraftKeywordsToolParams {
 
 /// Parameters for adding negative keywords.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AddNegativeKeywordsToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -165,6 +192,7 @@ pub struct AddNegativeKeywordsToolParams {
 
 /// Parameters for tools that address one negative keyword list.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NegativeKeywordListParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -174,6 +202,7 @@ pub struct NegativeKeywordListParams {
 
 /// Parameters for creating a negative keyword list.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateNegativeKeywordListParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -189,6 +218,7 @@ pub struct CreateNegativeKeywordListParams {
 
 /// Parameters for adding keywords to an existing negative keyword list.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AddToNegativeKeywordListParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -202,6 +232,7 @@ pub struct AddToNegativeKeywordListParams {
 
 /// Parameters for removing keywords from a negative keyword list.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RemoveFromNegativeKeywordListParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -213,6 +244,7 @@ pub struct RemoveFromNegativeKeywordListParams {
 
 /// Parameters for attaching/detaching a negative keyword list to campaigns.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NegativeKeywordListCampaignsParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -224,6 +256,7 @@ pub struct NegativeKeywordListCampaignsParams {
 
 /// Parameters for excluding a geographic location from a campaign.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExcludeGeoTargetToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -236,6 +269,7 @@ pub struct ExcludeGeoTargetToolParams {
 
 /// Parameters for removing a positive geographic target from a campaign.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RemoveGeoTargetToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -248,6 +282,7 @@ pub struct RemoveGeoTargetToolParams {
 
 /// Parameters for excluding demographic tiers from ad groups.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExcludeDemographicsToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -271,6 +306,7 @@ pub struct ExcludeDemographicsToolParams {
 
 /// Parameters for removing a demographic criterion from an ad group.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RemoveDemographicCriterionToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -285,6 +321,7 @@ pub struct RemoveDemographicCriterionToolParams {
 
 /// Parameters for reading demographic criteria.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetDemographicsToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -294,6 +331,7 @@ pub struct GetDemographicsToolParams {
 
 /// Parameters for setting a campaign's geo target type.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetCampaignGeoTargetTypeToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -309,6 +347,7 @@ pub struct SetCampaignGeoTargetTypeToolParams {
 
 /// Parameters for drafting sitelink extensions.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DraftSitelinksToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -320,6 +359,7 @@ pub struct DraftSitelinksToolParams {
 
 /// Parameters for creating callout extensions.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateCalloutsToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -331,6 +371,7 @@ pub struct CreateCalloutsToolParams {
 
 /// Parameters for creating structured snippet extensions.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateSnippetsToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -346,6 +387,7 @@ pub struct CreateSnippetsToolParams {
 
 /// Parameters for creating a conversion action for server-side click uploads.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateConversionActionToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -361,6 +403,7 @@ pub struct CreateConversionActionToolParams {
 
 /// Parameters for setting a conversion action's primary/secondary status.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetConversionActionPrimaryToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -374,6 +417,7 @@ pub struct SetConversionActionPrimaryToolParams {
 
 /// Parameters for pausing, enabling, or removing an entity.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EntityActionParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -385,6 +429,7 @@ pub struct EntityActionParams {
 
 /// Parameters for confirming and applying a change plan.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConfirmApplyParams {
     /// The plan ID returned from a draft/preview operation.
     pub plan_id: String,
@@ -410,6 +455,7 @@ pub struct ConfirmApplyParams {
 
 /// Parameters for creating a new ad group.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateAdGroupToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -426,6 +472,7 @@ pub struct CreateAdGroupToolParams {
 
 /// Parameters for updating an ad group.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateAdGroupToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -442,6 +489,7 @@ pub struct UpdateAdGroupToolParams {
 
 /// Parameters for keyword discovery.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DiscoverKeywordsToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -451,6 +499,7 @@ pub struct DiscoverKeywordsToolParams {
 
 /// Parameters for keyword forecasts.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct KeywordForecastsToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -462,6 +511,7 @@ pub struct KeywordForecastsToolParams {
 
 /// Parameters for creating a Performance Max campaign.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreatePmaxCampaignToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -489,6 +539,7 @@ pub struct CreatePmaxCampaignToolParams {
 
 /// Parameters for adding audience targeting to a campaign.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AddAudienceTargetingToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -502,6 +553,7 @@ pub struct AddAudienceTargetingToolParams {
 
 /// Parameters for creating a portfolio bidding strategy.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreatePortfolioBiddingToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -517,6 +569,7 @@ pub struct CreatePortfolioBiddingToolParams {
 
 /// Parameters for updating a keyword bid.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateKeywordBidToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -532,6 +585,7 @@ pub struct UpdateKeywordBidToolParams {
 
 /// Parameters for updating a keyword's landing page (final URL).
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateKeywordFinalUrlToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -546,6 +600,7 @@ pub struct UpdateKeywordFinalUrlToolParams {
 
 /// Parameters for uploading an image asset.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UploadImageAssetToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -557,6 +612,7 @@ pub struct UploadImageAssetToolParams {
 
 /// Parameters for uploading a text asset.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UploadTextAssetToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -568,6 +624,7 @@ pub struct UploadTextAssetToolParams {
 
 /// Parameters for linking an asset to a Performance Max asset group.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LinkAssetToAssetGroupToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -583,6 +640,7 @@ pub struct LinkAssetToAssetGroupToolParams {
 
 /// Parameters for adding signals to a Performance Max asset group.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AddAssetGroupSignalToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -596,6 +654,7 @@ pub struct AddAssetGroupSignalToolParams {
 
 /// Parameters for setting campaign ad schedule.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetCampaignScheduleToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -607,6 +666,7 @@ pub struct SetCampaignScheduleToolParams {
 
 /// Parameters for applying or dismissing a recommendation.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RecommendationActionToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -620,6 +680,7 @@ pub struct RecommendationActionToolParams {
 /// no payload: a dismiss is the same operation whatever the recommendation
 /// type, while an apply may need to say what to apply.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ApplyRecommendationToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -645,6 +706,7 @@ pub struct ApplyRecommendationToolParams {
 
 /// Parameters for removing a campaign asset (extension).
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RemoveExtensionToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -658,6 +720,7 @@ pub struct RemoveExtensionToolParams {
 
 /// Parameters for removing keywords from an ad group.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RemoveKeywordsToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -669,6 +732,7 @@ pub struct RemoveKeywordsToolParams {
 
 /// Parameters for removing negative keywords from a campaign.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RemoveNegativeKeywordsToolParams {
     /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
     pub customer_id: Option<String>,
@@ -800,14 +864,19 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Get search terms report showing actual user queries that triggered your ads. Defaults to last 30 days. Returns top 200 by clicks."
+        description = "Get search terms report showing actual user queries that triggered your ads. Window: date_range_start/date_range_end, defaulting to the last 30 days. Rows: limit, 1 to 10000, defaulting to the top 200 by clicks."
     )]
-    async fn get_search_terms(&self, Parameters(params): Parameters<DateRangeParams>) -> String {
+    async fn get_search_terms(
+        &self,
+        Parameters(params): Parameters<SearchTermsToolParams>,
+    ) -> String {
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         let ds = params.date_range_start;
         let de = params.date_range_end;
+        let limit = params.limit;
         self.run_tool(|client| async move {
-            tools::keywords::get_search_terms(&client, &cid, ds.as_deref(), de.as_deref()).await
+            tools::keywords::get_search_terms(&client, &cid, ds.as_deref(), de.as_deref(), limit)
+                .await
         })
         .await
     }

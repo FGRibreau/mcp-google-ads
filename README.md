@@ -169,7 +169,7 @@ All configuration is via environment variables. No config files.
 | `get_campaign_performance` | Campaign metrics (cost, clicks, conversions, CPA) |
 | `get_ad_performance` | Ad-level metrics with headlines and descriptions |
 | `get_keyword_performance` | Keyword metrics with quality scores |
-| `get_search_terms` | Actual user queries that triggered ads |
+| `get_search_terms` | Actual user queries that triggered ads (window via date_range_start/end, rows via `limit`) |
 | `get_negative_keywords` | List campaign-level negative keywords (shared-list exclusions are separate — see below) |
 | `list_negative_keyword_lists` | List negative keyword lists (shared sets) and the campaigns each is attached to |
 | `get_negative_keyword_list` | Keywords inside one negative keyword list, with criterion IDs |
