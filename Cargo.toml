@@ -13,7 +13,11 @@ categories = ["command-line-utilities", "web-programming"]
 exclude = ["dogfood-output/", "scripts/", "assets/", ".claude/", ".envrc"]
 
 [dependencies]
-rmcp = { version = "1.4", features = ["server", "transport-io", "macros"] }
+rmcp = { version = "=3.1.4", features = ["server", "transport-io", "macros"] }
+# Pinned to the exact `rmcp` version: `rmcp` requires `rmcp-macros` with a caret
+# range, and the two are released in lockstep, so Cargo is otherwise free to pair a
+# runtime with a macro crate that expands to functions the runtime does not have.
+rmcp-macros = "=3.1.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 yup-oauth2 = "12"
 schemars = "1"
