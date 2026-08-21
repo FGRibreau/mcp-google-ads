@@ -5,6 +5,36 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-08-21
+
+### Changed
+
+- `rmcp` 0.16 to 3.1.4. The protocol version this server announces at handshake
+  moves from `2025-03-26` to `2025-11-25`. The tool surface is untouched. All
+  62 tools still list, and a `tools/call` round-trips exactly as before.
+
+- `rmcp` and `rmcp-macros` are pinned to the same exact version. `rmcp` asks
+  for its macro crate through a caret range even though the two ship in
+  lockstep, so Cargo was free to pair a 1.4.0 runtime with a 1.8.0 macro crate.
+  It did, and the build came apart into sixty copies of `cannot find function
+  schema_for_input`, one per tool, every one of them pointing at this crate
+  instead of at the dependency that was actually wrong. Pinning both stops
+  Cargo from choosing a mismatched pair, and a partial bump now fails during
+  resolution with a message that names the real culprit.
+
+- `get_info` is built through rmcp's constructors, since `ServerInfo`,
+  `ServerCapabilities` and `Implementation` are now `#[non_exhaustive]`. Those
+  constructors read their defaults from inside rmcp, so the explicit
+  `server_info` matters: without it the server introduces itself to every MCP
+  client as `rmcp`. A test pins the announced name, version, description,
+  protocol version, tools capability and instructions.
+
+### Security
+
+- GHSA-89vp-x53w-74fx on `rmcp` is cleared by leaving 0.16 behind. As 0.10.1
+  already noted, the flaw was never reachable here, since it sits in the
+  Streamable HTTP server transport and only `transport-io` is enabled.
+
 ## [0.11.0] - 2026-08-20
 
 ### Fixed

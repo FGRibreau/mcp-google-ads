@@ -2317,31 +2317,23 @@ impl GoogleAdsMcp {
     }
 }
 
-#[rmcp::tool_handler]
+#[rmcp::tool_handler(router = self.tool_router)]
 impl rmcp::ServerHandler for GoogleAdsMcp {
     fn get_info(&self) -> rmcp::model::ServerInfo {
-        rmcp::model::ServerInfo {
-            protocol_version: rmcp::model::ProtocolVersion::LATEST,
-            capabilities: rmcp::model::ServerCapabilities {
-                tools: Some(rmcp::model::ToolsCapability::default()),
-                ..Default::default()
-            },
-            server_info: rmcp::model::Implementation {
-                name: "mcp-google-ads".to_string(),
-                title: None,
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                description: Some(
-                    "MCP server for Google Ads API with safety guardrails".to_string(),
-                ),
-                icons: None,
-                website_url: None,
-            },
-            instructions: Some(
-                "MCP server for Google Ads API. Provides tools for campaign management, \
-                 reporting, and optimization with built-in safety guardrails."
-                    .to_string(),
-            ),
-        }
+        rmcp::model::ServerInfo::new(
+            rmcp::model::ServerCapabilities::builder()
+                .enable_tools()
+                .build(),
+        )
+        .with_protocol_version(rmcp::model::ProtocolVersion::LATEST)
+        .with_server_info(
+            rmcp::model::Implementation::new("mcp-google-ads", env!("CARGO_PKG_VERSION"))
+                .with_description("MCP server for Google Ads API with safety guardrails"),
+        )
+        .with_instructions(
+            "MCP server for Google Ads API. Provides tools for campaign management, \
+             reporting, and optimization with built-in safety guardrails.",
+        )
     }
 }
 
