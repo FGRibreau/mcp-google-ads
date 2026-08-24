@@ -162,6 +162,31 @@ pub struct DraftRsaToolParams {
     pub status: Option<models::AdStatus>,
 }
 
+/// Parameters for updating an existing Responsive Search Ad in place.
+///
+/// Every creative field is optional: only the ones provided are written, the
+/// rest of the ad is left untouched. At least one must be provided.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateRsaToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Numeric ID of the ad to edit (`ad.id`), not a resource name.
+    pub ad_id: String,
+    /// Replacement headlines (3-15, max 30 chars each). Omit to keep the
+    /// ad's current headlines.
+    pub headlines: Option<Vec<String>>,
+    /// Replacement descriptions (2-4, max 90 chars each). Omit to keep the
+    /// ad's current descriptions.
+    pub descriptions: Option<Vec<String>>,
+    /// Replacement landing page. Absolute http(s) URL, max 2048 characters.
+    pub final_url: Option<String>,
+    /// Display URL path 1, max 15 characters. Empty string clears it.
+    pub path1: Option<String>,
+    /// Display URL path 2, max 15 characters. Empty string clears it.
+    pub path2: Option<String>,
+}
+
 /// Parameters for drafting keyword additions.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1152,6 +1177,34 @@ impl GoogleAdsMcp {
             path1: params.path1.as_deref(),
             path2: params.path2.as_deref(),
             status: params.status,
+        }) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Update an existing Responsive Search Ad in place (headlines, descriptions, final URL, display paths) via an update with field mask — preserves the ad's ID and its asset performance history, unlike remove + re-create. Only the fields provided are written; omitted fields are left untouched. Returns a preview; call confirm_and_apply to execute."
+    )]
+    async fn update_responsive_search_ad(
+        &self,
+        Parameters(params): Parameters<UpdateRsaToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::ads_write::update_responsive_search_ad(&tools::ads_write::UpdateRsaParams {
+            config: &config,
+            customer_id: &cid,
+            ad_id: &params.ad_id,
+            headlines: params.headlines,
+            descriptions: params.descriptions,
+            final_url: params.final_url.as_deref(),
+            path1: params.path1.as_deref(),
+            path2: params.path2.as_deref(),
         }) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),

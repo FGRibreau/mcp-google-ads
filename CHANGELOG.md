@@ -5,6 +5,38 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-08-24
+
+### Added
+
+- `update_responsive_search_ad` edits an existing ad in place instead of
+  forcing a remove-and-re-create. Changing a single headline used to cost the
+  ad everything it had earned: the asset-level performance labels Google
+  attaches to each headline and description, and the ad-level learning that a
+  fresh ad starts over from. The server could only draft a new ad, so every
+  copy change paid that price.
+
+  The operation carries a field mask built from the fields the caller actually
+  supplied. The ad keeps its ID, and a field left out is left alone — asking to
+  rewrite the headlines does not clear the descriptions. An update naming no
+  field at all is refused rather than applied as a silent no-op, because an
+  update that quietly does nothing is indistinguishable from one that worked.
+
+  Every bound is refused rather than truncated, and the rejection names both
+  the field and the limit it broke: 3 to 15 headlines of 30 characters, 2 to 4
+  descriptions of 90, an absolute http(s) final URL of 2048, and display paths
+  of 15 — counted in characters, not bytes. `ad_id` must be a bare numeric id:
+  passing a full resource name used to build a nonsensical URL and fail against
+  the API with a message that pointed nowhere.
+
+### Changed
+
+- `draft_responsive_search_ad` and `update_responsive_search_ad` now share one
+  set of headline and description validators rather than each carrying its own
+  copy of the limits, so create and update cannot drift apart on a bound. The
+  messages are unchanged. One nearly invisible difference: when an input breaks
+  two rules at once, the error that surfaces may now be the other one.
+
 ## [0.12.0] - 2026-08-21
 
 ### Changed

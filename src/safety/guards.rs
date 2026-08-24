@@ -150,6 +150,27 @@ pub fn validate_final_url(url: &str) -> Result<()> {
     Ok(())
 }
 
+/// Maximum length (in characters) of an RSA display-URL path segment.
+/// Google Ads caps `path1` / `path2` at 15 characters each.
+pub const MAX_DISPLAY_PATH_LEN: usize = 15;
+
+/// Validate one RSA display-URL path segment (`path1` / `path2`).
+///
+/// `field` names the parameter being checked so a rejection points at the
+/// offending input rather than at "a path". An empty value is accepted: writing
+/// an empty path under a field mask is how a caller clears a display path that
+/// an ad already carries.
+pub fn validate_display_path(field: &str, path: &str) -> Result<()> {
+    let char_count = path.chars().count();
+    if char_count > MAX_DISPLAY_PATH_LEN {
+        return Err(McpGoogleAdsError::Validation(format!(
+            "{} exceeds {} character limit ({} chars)",
+            field, MAX_DISPLAY_PATH_LEN, char_count
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,5 +466,40 @@ mod tests {
         let at_limit = format!("{}{}", prefix, "a".repeat(MAX_FINAL_URL_LEN - prefix.len()));
         assert_eq!(at_limit.chars().count(), MAX_FINAL_URL_LEN);
         assert!(validate_final_url(&at_limit).is_ok());
+    }
+    #[test]
+    fn test_validate_display_path_at_limit_ok() {
+        let at_limit = "a".repeat(MAX_DISPLAY_PATH_LEN);
+        assert!(validate_display_path("path1", &at_limit).is_ok());
+    }
+
+    #[test]
+    fn test_validate_display_path_over_limit_rejected() {
+        let over = "a".repeat(MAX_DISPLAY_PATH_LEN + 1);
+        let err = validate_display_path("path2", &over)
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        // The rejection must name both the offending field and the bound.
+        assert!(
+            err.contains("path2"),
+            "error must name the field, got: {err}"
+        );
+        assert!(
+            err.contains("15 character limit"),
+            "error must name the bound, got: {err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_display_path_counts_characters_not_bytes() {
+        // 15 multi-byte characters is 45 bytes but still within the limit.
+        assert!(validate_display_path("path1", &"é".repeat(MAX_DISPLAY_PATH_LEN)).is_ok());
+        assert!(validate_display_path("path1", &"é".repeat(MAX_DISPLAY_PATH_LEN + 1)).is_err());
+    }
+
+    #[test]
+    fn test_validate_display_path_accepts_empty_to_clear() {
+        assert!(validate_display_path("path1", "").is_ok());
     }
 }
