@@ -3,6 +3,7 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod gaql;
+pub mod http_auth;
 pub mod models;
 pub mod safety;
 pub mod tools;

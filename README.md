@@ -157,6 +157,7 @@ All configuration is via environment variables. No config files.
 | `GOOGLE_ADS_MCP_TRANSPORT` | `stdio` | MCP wire transport: `stdio` or `http` (aliases: `streamable-http`, `streamable_http`) |
 | `GOOGLE_ADS_MCP_HTTP_PORT` | `8080` | Port when `GOOGLE_ADS_MCP_TRANSPORT=http`; the server binds `0.0.0.0:<port>` and listens at `http://0.0.0.0:<port>/mcp` |
 | `GOOGLE_ADS_MCP_ALLOWED_HOSTS` | (unset — loopback only) | Comma-separated inbound `Host` header allowlist for `GOOGLE_ADS_MCP_TRANSPORT=http` (e.g. `example.com,example.com:8080`). `*` accepts any `Host` (not recommended) |
+| `GOOGLE_ADS_MCP_API_KEY` | (unset — unauthenticated) | Shared secret required in the `X-API-Key` header on every request to `GOOGLE_ADS_MCP_TRANSPORT=http`. Unset means the HTTP transport is unauthenticated |
 
 ---
 
@@ -183,7 +184,19 @@ The underlying transport (`rmcp`) separately validates the inbound `Host` header
 GOOGLE_ADS_MCP_ALLOWED_HOSTS=google-ads-mcp.stage.example.com
 ```
 
-Put a reverse proxy in front for TLS/auth before exposing this beyond localhost or a private network.
+Set `GOOGLE_ADS_MCP_API_KEY` to require every request to carry a matching `X-API-Key` header — without it, anyone who can reach the port (and pass the `Host` allowlist) can call every tool, including writes:
+
+```bash
+GOOGLE_ADS_MCP_API_KEY=$(openssl rand -hex 32)
+```
+
+Clients then send it on every request:
+
+```bash
+curl -H "X-API-Key: $GOOGLE_ADS_MCP_API_KEY" http://localhost:8080/mcp ...
+```
+
+Put a reverse proxy in front for TLS before exposing this beyond localhost or a private network.
 
 ---
 

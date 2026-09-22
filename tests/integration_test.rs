@@ -68,6 +68,7 @@ fn test_config() -> Config {
         transport: mcp_google_ads::config::Transport::default(),
         http_port: 8080,
         allowed_hosts: None,
+        api_key: None,
     }
 }
 

@@ -156,6 +156,11 @@ pub struct Config {
     /// independent of which interface the socket is bound to. `Some(vec![])`
     /// means "accept any Host header" (opted in via `*`).
     pub allowed_hosts: Option<Vec<String>>,
+    /// Shared secret every request to the `Http` transport must present in an
+    /// `X-API-Key` header (ignored for `Stdio`). `None` (unset or empty)
+    /// leaves the transport unauthenticated — anyone who can reach the port
+    /// and pass the `Host` allowlist can call every tool.
+    pub api_key: Option<String>,
 }
 
 impl Config {
@@ -177,6 +182,7 @@ impl Config {
     /// | `GOOGLE_ADS_MCP_TRANSPORT` | `stdio` (`stdio` or `http`) |
     /// | `GOOGLE_ADS_MCP_HTTP_PORT` | `8080` |
     /// | `GOOGLE_ADS_MCP_ALLOWED_HOSTS` | (unset — loopback only) |
+    /// | `GOOGLE_ADS_MCP_API_KEY` | (unset — unauthenticated) |
     pub fn load() -> Result<Self> {
         let login_customer_id = std::env::var("GOOGLE_ADS_LOGIN_CUSTOMER_ID")
             .ok()
@@ -206,6 +212,9 @@ impl Config {
             transport: env_transport_or("GOOGLE_ADS_MCP_TRANSPORT", Transport::Stdio),
             http_port: env_u16_or("GOOGLE_ADS_MCP_HTTP_PORT", 8080),
             allowed_hosts: env_allowed_hosts("GOOGLE_ADS_MCP_ALLOWED_HOSTS"),
+            api_key: std::env::var("GOOGLE_ADS_MCP_API_KEY")
+                .ok()
+                .filter(|v| !v.is_empty()),
         })
     }
 }
@@ -454,6 +463,35 @@ mod tests {
             Some(Vec::new())
         );
         std::env::remove_var("__MCP_TEST_ALLOWED_HOSTS__");
+    }
+
+    #[test]
+    fn test_api_key_unset_is_none() {
+        let _env = env_guard();
+
+        std::env::remove_var("GOOGLE_ADS_MCP_API_KEY");
+        let config = Config::load().unwrap();
+        assert_eq!(config.api_key, None);
+    }
+
+    #[test]
+    fn test_api_key_empty_is_none() {
+        let _env = env_guard();
+
+        std::env::set_var("GOOGLE_ADS_MCP_API_KEY", "");
+        let config = Config::load().unwrap();
+        assert_eq!(config.api_key, None);
+        std::env::remove_var("GOOGLE_ADS_MCP_API_KEY");
+    }
+
+    #[test]
+    fn test_api_key_from_env() {
+        let _env = env_guard();
+
+        std::env::set_var("GOOGLE_ADS_MCP_API_KEY", "s3cr3t");
+        let config = Config::load().unwrap();
+        assert_eq!(config.api_key, Some("s3cr3t".to_string()));
+        std::env::remove_var("GOOGLE_ADS_MCP_API_KEY");
     }
 
     #[test]

@@ -50,6 +50,14 @@ async fn run_http(config: Config) -> Result<()> {
     };
 
     let bind_addr = format!("0.0.0.0:{}", config.http_port);
+    let api_key = config.api_key.clone();
+
+    if api_key.is_none() {
+        tracing::warn!(
+            "GOOGLE_ADS_MCP_API_KEY is unset — the HTTP transport is unauthenticated; \
+             anyone who can reach this port (subject to GOOGLE_ADS_MCP_ALLOWED_HOSTS) can call every tool"
+        );
+    }
 
     let http_config = match &config.allowed_hosts {
         None => StreamableHttpServerConfig::default(),
@@ -71,7 +79,12 @@ async fn run_http(config: Config) -> Result<()> {
         http_config,
     );
 
-    let router = axum::Router::new().nest_service("/mcp", service);
+    let router =
+        axum::Router::new()
+            .nest_service("/mcp", service)
+            .layer(axum::middleware::from_fn(move |req, next| {
+                mcp_google_ads::http_auth::check_api_key(api_key.clone(), req, next)
+            }));
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
