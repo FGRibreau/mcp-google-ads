@@ -65,6 +65,9 @@ fn test_config() -> Config {
         },
         safety: mcp_google_ads::config::SafetyConfig::default(),
         read_only: false,
+        transport: mcp_google_ads::config::Transport::default(),
+        http_port: 8080,
+        allowed_hosts: None,
     }
 }
 

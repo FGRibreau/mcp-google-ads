@@ -61,6 +61,8 @@ On success the plan is removed from `PENDING_PLANS` and the mutation is logged v
 - `confirm_and_apply` never emits a "successful but you should have dry-run'd" warning — cosmetic warnings with no enforcement were removed as security theatre (see `docs/decisions/0001-v0.3.0-fix-strategy.md`).
 - Read tools default to a 30-day window when no explicit date range is given.
 - `GOOGLE_ADS_READ_ONLY=true` disables all write tools at the `check_write_allowed()` gate in `src/lib.rs`.
+- `GOOGLE_ADS_MCP_TRANSPORT` (`src/main.rs`, `src/config.rs::Transport`) picks the wire transport: `stdio` (default) or `http` (streamable HTTP per the MCP spec). HTTP always binds `0.0.0.0` (container/reverse-proxy friendly) on the port from `GOOGLE_ADS_MCP_HTTP_PORT` (default `8080`) — there's no separate bind-IP setting. In HTTP mode `GoogleAdsMcp::new` is called once per session by `StreamableHttpService`'s factory closure (`LocalSessionManager`) rather than once at process startup, so it must stay cheap and side-effect-free — it currently just stores `Config` and builds the tool router.
+- The bind address/port and the inbound `Host` header allowlist are two independent guards — binding `0.0.0.0` does not widen which `Host` values are accepted. `rmcp`'s `StreamableHttpServerConfig` defaults `allowed_hosts` to loopback only (`localhost`/`127.0.0.1`/`::1`, a DNS-rebinding guard) regardless of the bind address; `GOOGLE_ADS_MCP_ALLOWED_HOSTS` (`config.rs::env_allowed_hosts`, comma-separated, `*` = accept any) is the explicit opt-in to widen it, e.g. for a real hostname behind a reverse proxy.
 
 ### Testing pattern
 

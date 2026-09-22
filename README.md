@@ -154,6 +154,36 @@ All configuration is via environment variables. No config files.
 | `GOOGLE_ADS_AUDIT_LOG` | `~/.mcp-google-ads/audit.log` | Path for mutation audit log |
 | `GOOGLE_ADS_BLOCKED_OPS` | | Comma-separated list of blocked operations |
 | `GOOGLE_ADS_READ_ONLY` | `false` | Disable all write tools |
+| `GOOGLE_ADS_MCP_TRANSPORT` | `stdio` | MCP wire transport: `stdio` or `http` (aliases: `streamable-http`, `streamable_http`) |
+| `GOOGLE_ADS_MCP_HTTP_PORT` | `8080` | Port when `GOOGLE_ADS_MCP_TRANSPORT=http`; the server binds `0.0.0.0:<port>` and listens at `http://0.0.0.0:<port>/mcp` |
+| `GOOGLE_ADS_MCP_ALLOWED_HOSTS` | (unset — loopback only) | Comma-separated inbound `Host` header allowlist for `GOOGLE_ADS_MCP_TRANSPORT=http` (e.g. `example.com,example.com:8080`). `*` accepts any `Host` (not recommended) |
+
+---
+
+### Transports
+
+By default the server speaks MCP over **stdio** — the shape every MCP host (Claude Desktop, Claude Code, etc.) expects for a subprocess-managed server, as configured in the examples above.
+
+Set `GOOGLE_ADS_MCP_TRANSPORT=http` to instead serve the [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports#streamable-http) over the network, so multiple clients can share one long-running process instead of each launching their own subprocess:
+
+```bash
+GOOGLE_ADS_MCP_TRANSPORT=http \
+GOOGLE_ADS_MCP_HTTP_PORT=8080 \
+GOOGLE_ADS_DEVELOPER_TOKEN=... \
+GOOGLE_ADS_CUSTOMER_ID=... \
+cargo run --release
+```
+
+The server always binds all interfaces (`0.0.0.0`) — there's no separate bind-IP setting, since this is meant to run behind a Docker port mapping or a reverse proxy rather than pick its own interface.
+
+The underlying transport (`rmcp`) separately validates the inbound `Host` header and, by default, only accepts loopback names (`localhost`, `127.0.0.1`, `::1`) — a DNS-rebinding guard that is independent of which interface/port the socket is bound to. A request through anything else (a container's real IP, a domain name behind a reverse proxy) gets a `403` until you widen that allowlist with `GOOGLE_ADS_MCP_ALLOWED_HOSTS`:
+
+```bash
+# behind a reverse proxy / ingress at this hostname
+GOOGLE_ADS_MCP_ALLOWED_HOSTS=google-ads-mcp.stage.example.com
+```
+
+Put a reverse proxy in front for TLS/auth before exposing this beyond localhost or a private network.
 
 ---
 

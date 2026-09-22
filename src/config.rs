@@ -33,6 +33,13 @@ fn env_u32_or(key: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
+fn env_u16_or(key: &str, default: u16) -> u16 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
 fn env_bool_or(key: &str, default: bool) -> bool {
     std::env::var(key)
         .ok()
@@ -46,6 +53,23 @@ fn env_list(key: &str) -> Vec<String> {
         .filter(|v| !v.is_empty())
         .map(|v| v.split(',').map(|s| s.trim().to_string()).collect())
         .unwrap_or_default()
+}
+
+/// `None` leaves the HTTP transport's own secure default (loopback only) in
+/// place. `Some(vec![])` is the sentinel for "accept any `Host` header" (the
+/// caller opted in with `*`) — `rmcp`'s `StreamableHttpServerConfig` treats an
+/// empty `allowed_hosts` list as "allow all", so this doubles as the exact
+/// value that call site needs.
+fn env_allowed_hosts(key: &str) -> Option<Vec<String>> {
+    let raw = std::env::var(key).ok()?;
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    if raw == "*" {
+        return Some(Vec::new());
+    }
+    Some(raw.split(',').map(|s| s.trim().to_string()).collect())
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +115,28 @@ impl Default for SafetyConfig {
     }
 }
 
+/// Which wire transport the MCP server listens on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Transport {
+    /// stdio (the default) — one client per process, spoken by every MCP host.
+    #[default]
+    Stdio,
+    /// Streamable HTTP, per the MCP spec — lets multiple clients connect over
+    /// the network instead of launching a subprocess per client.
+    Http,
+}
+
+fn env_transport_or(key: &str, default: Transport) -> Transport {
+    match std::env::var(key) {
+        Ok(v) => match v.to_lowercase().as_str() {
+            "stdio" => Transport::Stdio,
+            "http" | "streamable-http" | "streamable_http" => Transport::Http,
+            _ => default,
+        },
+        Err(_) => default,
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     pub google: GoogleConfig,
@@ -98,6 +144,18 @@ pub struct Config {
     pub safety: SafetyConfig,
     /// When true, only READ tools are exposed. All write/mutate tools are hidden.
     pub read_only: bool,
+    /// Which transport `main` serves the MCP protocol over.
+    pub transport: Transport,
+    /// Bind port for the `Http` transport (ignored for `Stdio`). Always binds
+    /// all interfaces (`0.0.0.0`) — this server is meant to sit behind a
+    /// container port mapping or reverse proxy, not to pick its own bind IP.
+    pub http_port: u16,
+    /// Inbound `Host` header allowlist for the `Http` transport (ignored for
+    /// `Stdio`). `None` keeps the transport's own secure default (loopback
+    /// only: `localhost`, `127.0.0.1`, `::1`) — a DNS-rebinding guard that is
+    /// independent of which interface the socket is bound to. `Some(vec![])`
+    /// means "accept any Host header" (opted in via `*`).
+    pub allowed_hosts: Option<Vec<String>>,
 }
 
 impl Config {
@@ -116,6 +174,9 @@ impl Config {
     /// | `GOOGLE_ADS_AUDIT_LOG` | `~/.mcp-google-ads/audit.log` |
     /// | `GOOGLE_ADS_BLOCKED_OPS` | (empty, comma-separated) |
     /// | `GOOGLE_ADS_READ_ONLY` | `false` |
+    /// | `GOOGLE_ADS_MCP_TRANSPORT` | `stdio` (`stdio` or `http`) |
+    /// | `GOOGLE_ADS_MCP_HTTP_PORT` | `8080` |
+    /// | `GOOGLE_ADS_MCP_ALLOWED_HOSTS` | (unset — loopback only) |
     pub fn load() -> Result<Self> {
         let login_customer_id = std::env::var("GOOGLE_ADS_LOGIN_CUSTOMER_ID")
             .ok()
@@ -142,6 +203,9 @@ impl Config {
                 blocked_operations: env_list("GOOGLE_ADS_BLOCKED_OPS"),
             },
             read_only: env_bool_or("GOOGLE_ADS_READ_ONLY", false),
+            transport: env_transport_or("GOOGLE_ADS_MCP_TRANSPORT", Transport::Stdio),
+            http_port: env_u16_or("GOOGLE_ADS_MCP_HTTP_PORT", 8080),
+            allowed_hosts: env_allowed_hosts("GOOGLE_ADS_MCP_ALLOWED_HOSTS"),
         })
     }
 }
@@ -323,5 +387,88 @@ mod tests {
         let config = Config::load().unwrap();
         assert!(config.ads.login_customer_id.is_none());
         std::env::remove_var("GOOGLE_ADS_LOGIN_CUSTOMER_ID");
+    }
+
+    #[test]
+    fn test_transport_defaults_to_stdio() {
+        let _env = env_guard();
+
+        std::env::remove_var("GOOGLE_ADS_MCP_TRANSPORT");
+        std::env::remove_var("GOOGLE_ADS_MCP_HTTP_PORT");
+        let config = Config::load().unwrap();
+        assert_eq!(config.transport, Transport::Stdio);
+        assert_eq!(config.http_port, 8080);
+    }
+
+    #[test]
+    fn test_transport_http_variants_and_case_insensitivity() {
+        let _env = env_guard();
+
+        for value in ["http", "HTTP", "streamable-http", "streamable_http"] {
+            std::env::set_var("GOOGLE_ADS_MCP_TRANSPORT", value);
+            assert_eq!(
+                env_transport_or("GOOGLE_ADS_MCP_TRANSPORT", Transport::Stdio),
+                Transport::Http,
+                "value {value:?} should select the Http transport"
+            );
+        }
+        std::env::remove_var("GOOGLE_ADS_MCP_TRANSPORT");
+    }
+
+    #[test]
+    fn test_transport_unrecognized_value_falls_back_to_default() {
+        let _env = env_guard();
+
+        std::env::set_var("GOOGLE_ADS_MCP_TRANSPORT", "carrier-pigeon");
+        assert_eq!(
+            env_transport_or("GOOGLE_ADS_MCP_TRANSPORT", Transport::Stdio),
+            Transport::Stdio
+        );
+        std::env::remove_var("GOOGLE_ADS_MCP_TRANSPORT");
+    }
+
+    #[test]
+    fn test_http_port_from_env() {
+        let _env = env_guard();
+
+        std::env::set_var("GOOGLE_ADS_MCP_HTTP_PORT", "9090");
+        let config = Config::load().unwrap();
+        assert_eq!(config.http_port, 9090);
+        std::env::remove_var("GOOGLE_ADS_MCP_HTTP_PORT");
+    }
+
+    #[test]
+    fn test_allowed_hosts_unset_keeps_the_secure_default() {
+        let _env = env_guard();
+
+        std::env::remove_var("GOOGLE_ADS_MCP_ALLOWED_HOSTS");
+        let config = Config::load().unwrap();
+        assert_eq!(config.allowed_hosts, None);
+    }
+
+    #[test]
+    fn test_allowed_hosts_wildcard_is_the_allow_all_sentinel() {
+        std::env::set_var("__MCP_TEST_ALLOWED_HOSTS__", "*");
+        assert_eq!(
+            env_allowed_hosts("__MCP_TEST_ALLOWED_HOSTS__"),
+            Some(Vec::new())
+        );
+        std::env::remove_var("__MCP_TEST_ALLOWED_HOSTS__");
+    }
+
+    #[test]
+    fn test_allowed_hosts_explicit_list() {
+        std::env::set_var(
+            "__MCP_TEST_ALLOWED_HOSTS__",
+            "example.com, example.com:8080",
+        );
+        assert_eq!(
+            env_allowed_hosts("__MCP_TEST_ALLOWED_HOSTS__"),
+            Some(vec![
+                "example.com".to_string(),
+                "example.com:8080".to_string()
+            ])
+        );
+        std::env::remove_var("__MCP_TEST_ALLOWED_HOSTS__");
     }
 }
