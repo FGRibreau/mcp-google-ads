@@ -826,6 +826,16 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
+        description = "List every Google Ads customer account directly accessible by the configured credentials, via the listAccessibleCustomers endpoint. Unlike list_accounts (which only descends the customer_client hierarchy under the configured MCC), this is not scoped to any manager account and surfaces every account the service account/credentials can reach directly, including ones outside that MCC's hierarchy."
+    )]
+    async fn list_accessible_customers(&self) -> String {
+        self.run_tool(
+            |client| async move { tools::accounts::list_accessible_customers(&client).await },
+        )
+        .await
+    }
+
+    #[tool(
         description = "Get detailed information about a Google Ads account (currency, timezone, status)."
     )]
     async fn get_account_info(&self, Parameters(params): Parameters<CustomerIdParams>) -> String {

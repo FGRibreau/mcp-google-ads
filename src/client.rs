@@ -222,6 +222,14 @@ pub struct DismissRecommendationResponse {
     pub results: Vec<serde_json::Value>,
 }
 
+/// Response from `customers:listAccessibleCustomers`.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAccessibleCustomersResponse {
+    #[serde(default)]
+    pub resource_names: Vec<String>,
+}
+
 /// Google Ads REST API client.
 pub struct GoogleAdsClient {
     http: reqwest::Client,
@@ -263,12 +271,13 @@ impl GoogleAdsClient {
         id.replace('-', "")
     }
 
-    /// Build common headers for Google Ads API requests.
+    /// Build common headers for Google Ads API requests, without the
+    /// `login-customer-id` header.
     ///
     /// When the base URL points anywhere other than the real Google Ads host
     /// (e.g. a `wiremock` server) and no credentials file exists, this falls
     /// back to a static dummy bearer token so tests don't need an OAuth2 flow.
-    async fn build_headers(&self) -> Result<reqwest::header::HeaderMap> {
+    async fn build_base_headers(&self) -> Result<reqwest::header::HeaderMap> {
         let token = if self.is_test_base_url() && !self.config.google.credentials_path.exists() {
             "test-access-token".to_string()
         } else {
@@ -293,6 +302,18 @@ impl GoogleAdsClient {
                 McpGoogleAdsError::Config(format!("Invalid developer token: {}", e))
             })?,
         );
+
+        Ok(headers)
+    }
+
+    /// Build common headers for Google Ads API requests.
+    ///
+    /// Layers `login-customer-id` (when configured) on top of
+    /// [`Self::build_base_headers`]. Calls that are not scoped to a manager
+    /// hierarchy — e.g. `listAccessibleCustomers` — must use
+    /// [`Self::build_base_headers`] directly instead.
+    async fn build_headers(&self) -> Result<reqwest::header::HeaderMap> {
+        let mut headers = self.build_base_headers().await?;
 
         if let Some(ref login_customer_id) = self.config.ads.login_customer_id {
             let normalized = Self::normalize_customer_id(login_customer_id);
@@ -373,6 +394,32 @@ impl GoogleAdsClient {
         }
 
         Ok(all_results)
+    }
+
+    /// Call `customers:listAccessibleCustomers`.
+    ///
+    /// Unlike [`Self::search`] against `customer_client` (which only surfaces
+    /// accounts reachable by descending the configured MCC's hierarchy),
+    /// this returns every customer resource the authenticating credentials
+    /// have *direct* access to, regardless of which (if any) MCC they sit
+    /// under. It takes no customer ID and, per Google's docs, must not carry
+    /// a `login-customer-id` header — the call isn't scoped to a manager
+    /// account — so it builds its headers via [`Self::build_base_headers`]
+    /// rather than [`Self::build_headers`].
+    pub async fn list_accessible_customers(&self) -> Result<Vec<String>> {
+        let url = format!("{}/customers:listAccessibleCustomers", self.base_url);
+        let headers = self.build_base_headers().await?;
+
+        let response = self.http.get(&url).headers(headers).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(parse_google_ads_error(status, &error_body));
+        }
+
+        let parsed: ListAccessibleCustomersResponse = response.json().await?;
+        Ok(parsed.resource_names)
     }
 
     /// Call the Keyword Planner generateKeywordIdeas endpoint.
