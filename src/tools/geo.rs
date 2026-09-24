@@ -239,6 +239,121 @@ pub fn remove_geo_target(
     Ok(preview)
 }
 
+/// Resolve a country into a `geoTargetConstants/{id}` resource name.
+///
+/// Accepts an ISO-3166 alpha-2 code ("GB", "gb") or a country name ("United
+/// Kingdom", "united kingdom"). A two-letter input resolves via
+/// `geo_target_constant.country_code`; anything longer is matched against
+/// `geo_target_constant.name`, case-insensitively on our side since GAQL
+/// string comparison is case-sensitive.
+///
+/// The lookup is constrained to `target_type = 'Country'`, so "Cambridge" or
+/// "California" resolve to nothing rather than to a city or region — a
+/// country parameter that silently accepted a city would quietly change the
+/// meaning of the caller's request.
+///
+/// Errors when the input matches no country, or when it matches several: an
+/// ambiguous country is listed back to the caller rather than guessed at.
+pub async fn resolve_country_geo_target(
+    client: &GoogleAdsClient,
+    customer_id: &str,
+    country: &str,
+) -> Result<String> {
+    let input = country.trim();
+    if input.is_empty() {
+        return Err(McpGoogleAdsError::Validation(
+            "country must not be empty".to_string(),
+        ));
+    }
+
+    let is_iso_code = input.len() == 2 && input.chars().all(|c| c.is_ascii_alphabetic());
+    let predicate = if is_iso_code {
+        format!(
+            "geo_target_constant.country_code = '{}'",
+            input.to_ascii_uppercase()
+        )
+    } else {
+        format!(
+            "geo_target_constant.name LIKE '%{}%'",
+            input.replace('\'', "\\'")
+        )
+    };
+
+    let query = format!(
+        "SELECT \
+            geo_target_constant.id, \
+            geo_target_constant.name, \
+            geo_target_constant.canonical_name, \
+            geo_target_constant.country_code \
+        FROM geo_target_constant \
+        WHERE geo_target_constant.target_type = 'Country' \
+        AND {}",
+        predicate
+    );
+
+    let rows = client.search(customer_id, &query).await?;
+
+    let candidates: Vec<&serde_json::Value> = rows
+        .iter()
+        .filter_map(|row| row.get("geoTargetConstant"))
+        .collect();
+
+    if candidates.is_empty() {
+        return Err(McpGoogleAdsError::Validation(format!(
+            "Could not resolve country '{}' — pass an ISO-3166 alpha-2 code \
+             (e.g. 'GB', 'US') or a full country name (e.g. 'United Kingdom'). \
+             Use search_geo_targets to look up other location types.",
+            country
+        )));
+    }
+
+    // A LIKE search can match several countries ("German" → Germany and any
+    // other name containing it). An exact, case-insensitive name match is the
+    // caller's intent; fall back to a sole candidate, otherwise list them.
+    let exact: Vec<&&serde_json::Value> = candidates
+        .iter()
+        .filter(|c| {
+            c.get("name")
+                .and_then(|n| n.as_str())
+                .is_some_and(|n| n.eq_ignore_ascii_case(input))
+        })
+        .collect();
+
+    let chosen = match (exact.len(), candidates.len()) {
+        (1, _) => *exact[0],
+        (0, 1) => candidates[0],
+        _ => {
+            let names: Vec<String> = candidates
+                .iter()
+                .filter_map(|c| c.get("name").and_then(|n| n.as_str()))
+                .map(|n| n.to_string())
+                .collect();
+            return Err(McpGoogleAdsError::Validation(format!(
+                "Country '{}' is ambiguous — it matches {}. \
+                 Pass an ISO-3166 alpha-2 code or the exact country name.",
+                country,
+                names.join(", ")
+            )));
+        }
+    };
+
+    let id = chosen
+        .get("id")
+        .and_then(|id| {
+            id.as_str()
+                .map(|s| s.to_string())
+                .or_else(|| id.as_u64().map(|n| n.to_string()))
+        })
+        .ok_or_else(|| {
+            McpGoogleAdsError::Validation(format!(
+                "Country '{}' resolved to a geo target with no id",
+                country
+            ))
+        })?;
+
+    normalize_geo_target_constant(&id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

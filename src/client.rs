@@ -376,11 +376,18 @@ impl GoogleAdsClient {
     }
 
     /// Call the Keyword Planner generateKeywordIdeas endpoint.
+    ///
+    /// `geo_target_constants` scopes the returned volumes to those locations
+    /// and is omitted from the request entirely when empty — an empty array
+    /// is not the same as "no geo filter" to the API. `language_constant` is
+    /// a `languageConstants/{id}` resource name.
     pub async fn generate_keyword_ideas(
         &self,
         customer_id: &str,
         seed_keywords: Vec<String>,
         page_size: Option<u32>,
+        geo_target_constants: &[String],
+        language_constant: &str,
     ) -> Result<Vec<serde_json::Value>> {
         let normalized_id = Self::normalize_customer_id(customer_id);
         let url = format!(
@@ -389,14 +396,18 @@ impl GoogleAdsClient {
         );
         let headers = self.build_headers().await?;
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "keywordSeed": {
                 "keywords": seed_keywords
             },
-            "language": "languageConstants/1000",
+            "language": language_constant,
             "pageSize": page_size.unwrap_or(50),
             "keywordPlanNetwork": "GOOGLE_SEARCH"
         });
+
+        if !geo_target_constants.is_empty() {
+            body["geoTargetConstants"] = serde_json::json!(geo_target_constants);
+        }
 
         let response = self
             .http

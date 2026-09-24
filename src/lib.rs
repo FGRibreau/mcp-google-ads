@@ -520,6 +520,12 @@ pub struct DiscoverKeywordsToolParams {
     pub customer_id: Option<String>,
     /// Seed keywords to generate ideas from.
     pub seed_keywords: Vec<String>,
+    /// Country to scope volumes to: an ISO-3166 alpha-2 code ('GB', 'US') or
+    /// a country name ('United Kingdom'). Omit for worldwide figures.
+    pub country: Option<String>,
+    /// Language to scope ideas to: a language code ('en', 'de', 'en_GB') or a
+    /// language name ('English'). Defaults to English.
+    pub language: Option<String>,
 }
 
 /// Parameters for keyword forecasts.
@@ -2034,14 +2040,23 @@ impl GoogleAdsMcp {
 
     // ── Keyword Planner ─────────────────────────────────────────────────
 
-    #[tool(description = "Discover keyword ideas from seed keywords using the Keyword Planner.")]
+    #[tool(
+        description = "Discover keyword ideas from seed keywords using the Keyword Planner. Pass country (ISO-3166 alpha-2 code or country name) to scope search volumes to one market, and language (code or name) to scope the ideas; without a country the figures returned are worldwide totals."
+    )]
     async fn discover_keywords(
         &self,
         Parameters(params): Parameters<DiscoverKeywordsToolParams>,
     ) -> String {
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         self.run_tool(|client| async move {
-            tools::keyword_planner::discover_keywords(&client, &cid, params.seed_keywords).await
+            tools::keyword_planner::discover_keywords(
+                &client,
+                &cid,
+                params.seed_keywords,
+                params.country.as_deref(),
+                params.language.as_deref(),
+            )
+            .await
         })
         .await
     }
