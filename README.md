@@ -110,6 +110,8 @@ cargo build --release
 
 ### 2. Set up credentials
 
+Follow [Credentials Setup](#credentials-setup) first (Cloud project, Explorer access, consent screen, OAuth client), then:
+
 ```bash
 # Generate OAuth2 refresh token
 ./scripts/generate_token.sh ~/.mcp-google-ads/credentials.json
@@ -117,23 +119,19 @@ cargo build --release
 
 ### 3. Configure Claude Code
 
-Add to `~/.claude/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "google-ads": {
-      "command": "/path/to/mcp-google-ads/target/release/mcp-google-ads",
-      "env": {
-        "GOOGLE_ADS_DEVELOPER_TOKEN": "your-developer-token",
-        "GOOGLE_ADS_CUSTOMER_ID": "123-456-7890",
-        "GOOGLE_ADS_CREDENTIALS_PATH": "~/.mcp-google-ads/credentials.json",
-        "GOOGLE_ADS_TOKEN_PATH": "~/.mcp-google-ads/token.json"
-      }
-    }
-  }
-}
+```bash
+claude mcp add google-ads --scope user \
+  -e GOOGLE_ADS_CUSTOMER_ID=123-456-7890 \
+  -e GOOGLE_ADS_CREDENTIALS_PATH=$HOME/.mcp-google-ads/credentials.json \
+  -e GOOGLE_ADS_TOKEN_PATH=$HOME/.mcp-google-ads/token.json \
+  -e GOOGLE_ADS_READ_ONLY=true \
+  -- /path/to/mcp-google-ads/target/release/mcp-google-ads
 ```
+
+Claude Code launches the server itself (stdio) at the start of each session — there is
+nothing to run manually. Check it with `claude mcp get google-ads`. Drop
+`GOOGLE_ADS_READ_ONLY=true` (`claude mcp remove google-ads -s user`, then re-add) once
+you want write tools.
 
 ---
 
@@ -143,7 +141,7 @@ All configuration is via environment variables. No config files.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `GOOGLE_ADS_DEVELOPER_TOKEN` | *required* | Google Ads API developer token |
+| `GOOGLE_ADS_DEVELOPER_TOKEN` | | Legacy, optional. Developer tokens were [sunset on 2026-09-09](https://developers.google.com/google-ads/api/docs/api-policy/developer-token); only sent if set |
 | `GOOGLE_ADS_CUSTOMER_ID` | *required* | Target account ID (e.g. `123-456-7890`) |
 | `GOOGLE_ADS_CREDENTIALS_PATH` | `~/.mcp-google-ads/credentials.json` | OAuth2 credentials JSON |
 | `GOOGLE_ADS_TOKEN_PATH` | `~/.mcp-google-ads/token.json` | Refresh token JSON |
@@ -253,28 +251,58 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 
 ## Credentials Setup
 
-### 1. Create a test account
+### 1. Get Google Ads API access for your Cloud project
 
-1. Create a **Manager Account (MCC)** at [ads.google.com](https://ads.google.com/home/tools/manager-accounts/)
-2. In the MCC, create a **Test Account** (Settings → Sub-account settings)
-3. Note both IDs
+Since the [2026-09-09 developer token sunset](https://developers.google.com/google-ads/api/docs/api-policy/developer-token),
+API access is granted to the **Google Cloud project** that owns your OAuth client — no
+developer token or Manager Account (MCC) is needed.
 
-### 2. Get a developer token
+1. [Google Cloud Console](https://console.cloud.google.com) → **APIs & Services → Library** → enable the **Google Ads API**
+2. On the Google Ads API overview page, expand **Upgrade access level** → **Apply for access** → **Explorer**
+   (usually auto-approved; 2,880 operations/day on production accounts — see
+   [access levels](https://developers.google.com/google-ads/api/docs/api-policy/access-levels)).
+   Without it, any query on a real account fails with
+   `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` (test accounts only).
 
-1. In MCC → **Tools & Settings → API Center**
-2. Request a developer token (test access is sufficient)
+For safe experimentation you can still create a **Test Account** under an MCC
+(Settings → Sub-account settings).
+
+### 2. Configure the OAuth consent screen
+
+**APIs & Services → OAuth consent screen** (Google Auth Platform):
+
+1. **Branding**: app name, user support email, developer contact email. Leave logo,
+   app domain and authorized domains empty — a desktop client redirecting to
+   `localhost` needs none, and a logo triggers verification.
+2. **Audience**: either
+   - **Publish app** (recommended): sign-in shows an "unverified app" warning
+     (Advanced → Go to …), and refresh tokens don't expire; or
+   - stay in **Testing** and add your Google account under **Test users**. Otherwise
+     sign-in fails with *"Access blocked: … has not completed the Google verification
+     process"*. **Refresh tokens expire after 7 days in Testing** — re-run step 4 weekly.
 
 ### 3. Create OAuth2 credentials
 
-1. [Google Cloud Console](https://console.cloud.google.com) → Enable **Google Ads API**
-2. **Credentials → Create → OAuth 2.0 Client ID → Desktop App**
-3. Download JSON to `~/.mcp-google-ads/credentials.json`
+1. In the same Cloud project: **Credentials → Create → OAuth 2.0 Client ID → Desktop App**
+2. Download JSON to `~/.mcp-google-ads/credentials.json`
 
 ### 4. Generate refresh token
 
 ```bash
 ./scripts/generate_token.sh
 ```
+
+Opens the browser and listens on `http://localhost:8085`. If the consent page shows an
+error, the script exits without saving a token — fix the cause and run it again.
+
+### Troubleshooting
+
+| Error | Fix |
+|---|---|
+| `Access blocked: … has not completed the Google verification process` | Publish the app or add yourself as a test user (step 2) |
+| `SERVICE_DISABLED` / "Google Ads API has not been used in project …" | Enable the Google Ads API (step 1.1), wait a few minutes |
+| `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` | Apply for Explorer access (step 1.2) |
+| `invalid_grant` after about a week | App is in Testing; re-run `generate_token.sh` or publish the app |
 
 ---
 

@@ -3,7 +3,7 @@
 //! These tests call the real Google Ads API using a TEST account.
 //! They require the following environment variables (note the TEST_ prefix):
 //!
-//! - GOOGLE_ADS_TEST_DEVELOPER_TOKEN
+//! - GOOGLE_ADS_TEST_DEVELOPER_TOKEN (optional, legacy — sunset 2026-09-09)
 //! - GOOGLE_ADS_TEST_CUSTOMER_ID
 //! - GOOGLE_ADS_TEST_CREDENTIALS_PATH
 //! - GOOGLE_ADS_TEST_TOKEN_PATH
@@ -20,13 +20,8 @@ use mcp_google_ads::config::Config;
 /// Build a Config from GOOGLE_ADS_TEST_* env vars.
 /// Panics immediately with an actionable message if any required var is missing.
 fn test_config() -> Config {
-    let developer_token = std::env::var("GOOGLE_ADS_TEST_DEVELOPER_TOKEN").unwrap_or_else(|_| {
-        panic!(
-            "GOOGLE_ADS_TEST_DEVELOPER_TOKEN is not set.\n\
-             Integration tests require a Google Ads test account.\n\
-             Set GOOGLE_ADS_TEST_* env vars (not GOOGLE_ADS_* — those are for production)."
-        )
-    });
+    // Optional: developer tokens were sunset on 2026-09-09.
+    let developer_token = std::env::var("GOOGLE_ADS_TEST_DEVELOPER_TOKEN").unwrap_or_default();
 
     let customer_id = std::env::var("GOOGLE_ADS_TEST_CUSTOMER_ID").unwrap_or_else(|_| {
         panic!(

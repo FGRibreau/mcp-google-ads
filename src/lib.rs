@@ -787,9 +787,9 @@ impl GoogleAdsMcp {
         status.push(format!(
             "Developer token: {}",
             if self.config.ads.developer_token.is_empty() {
-                "not configured"
+                "not set (not needed since the 2026-09-09 sunset)"
             } else {
-                "configured"
+                "set (ignored by Google since the 2026-09-09 sunset)"
             }
         ));
         status.push(format!(

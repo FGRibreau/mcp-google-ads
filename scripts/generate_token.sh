@@ -183,7 +183,6 @@ echo "Now set these environment variables (add to your shell profile or Claude C
 echo ""
 echo "  export GOOGLE_ADS_CREDENTIALS_PATH=\"$CREDENTIALS_FILE\""
 echo "  export GOOGLE_ADS_TOKEN_PATH=\"$TOKEN_FILE\""
-echo "  export GOOGLE_ADS_DEVELOPER_TOKEN=\"YOUR_DEVELOPER_TOKEN\""
 echo "  export GOOGLE_ADS_CUSTOMER_ID=\"YOUR_TEST_ACCOUNT_ID\""
 echo "  # export GOOGLE_ADS_LOGIN_CUSTOMER_ID=\"YOUR_MCC_ID\"  # optional, for MCC"
 echo ""
@@ -194,7 +193,6 @@ echo "    \"command\": \"$(cd "$(dirname "$0")/.." && pwd)/target/release/mcp-go
 echo '    "env": {'
 echo "      \"GOOGLE_ADS_CREDENTIALS_PATH\": \"$CREDENTIALS_FILE\","
 echo "      \"GOOGLE_ADS_TOKEN_PATH\": \"$TOKEN_FILE\","
-echo '      "GOOGLE_ADS_DEVELOPER_TOKEN": "YOUR_DEVELOPER_TOKEN",'
 echo '      "GOOGLE_ADS_CUSTOMER_ID": "YOUR_TEST_ACCOUNT_ID"'
 echo '    }'
 echo '  }'

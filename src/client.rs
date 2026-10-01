@@ -282,17 +282,17 @@ impl GoogleAdsClient {
                 .parse()
                 .map_err(|e| McpGoogleAdsError::Auth(format!("Invalid token header: {}", e)))?,
         );
-        let dev_token = if self.config.ads.developer_token.is_empty() {
-            "test-developer-token".to_string()
-        } else {
-            self.config.ads.developer_token.clone()
-        };
-        headers.insert(
-            "developer-token",
-            dev_token.parse().map_err(|e| {
-                McpGoogleAdsError::Config(format!("Invalid developer token: {}", e))
-            })?,
-        );
+        // Developer tokens were sunset on 2026-09-09: API access is now granted
+        // to the Google Cloud project that owns the OAuth client, and the header
+        // is ignored. Only send it when explicitly configured (legacy setups).
+        if !self.config.ads.developer_token.is_empty() {
+            headers.insert(
+                "developer-token",
+                self.config.ads.developer_token.parse().map_err(|e| {
+                    McpGoogleAdsError::Config(format!("Invalid developer token: {}", e))
+                })?,
+            );
+        }
 
         if let Some(ref login_customer_id) = self.config.ads.login_customer_id {
             let normalized = Self::normalize_customer_id(login_customer_id);
