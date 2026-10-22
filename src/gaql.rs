@@ -222,6 +222,87 @@ pub fn date_clause(start: &str, end: &str) -> String {
     format!("segments.date BETWEEN '{}' AND '{}'", start, end)
 }
 
+/// `campaign.start_date`/`campaign.end_date`, removed from the Google Ads API in
+/// v23 in favor of `campaign.start_date_time`/`campaign.end_date_time` (a
+/// datetime, not a bare date). Confirmed live against v25 (prod, 2026-10-23):
+/// `run_gaql` with the old field names fails with a raw `UNRECOGNIZED_FIELD`,
+/// and nothing points an agent reaching for the long-documented old name
+/// toward the replacement. `run_gaql` exists so an agent can write arbitrary
+/// GAQL without the server building it for them, so this rewrites the query
+/// transparently rather than only hinting at the fix.
+const DEPRECATED_DATE_FIELDS: &[(&str, &str)] = &[
+    ("campaign.start_date", "campaign.start_date_time"),
+    ("campaign.end_date", "campaign.end_date_time"),
+];
+
+/// Rewrite any `DEPRECATED_DATE_FIELDS` entry found among the query's exact
+/// SELECT fields to its v23+ replacement, returning the rewritten query and
+/// the (deprecated, replacement) pairs actually substituted (empty if none
+/// applied). Matches on the field exactly as parsed by `parse_select_fields`
+/// so `campaign.start_date_time` itself is never touched.
+pub fn rewrite_deprecated_date_fields(query: &str) -> (String, Vec<(&'static str, &'static str)>) {
+    let mut rewritten = query.to_string();
+    let mut applied = Vec::new();
+
+    for field in parse_select_fields(query) {
+        for &(deprecated, replacement) in DEPRECATED_DATE_FIELDS {
+            if field == deprecated {
+                rewritten = rewritten.replacen(deprecated, replacement, 1);
+                applied.push((deprecated, replacement));
+            }
+        }
+    }
+
+    (rewritten, applied)
+}
+
+/// Write a value at a dotted field path, creating intermediate objects as
+/// needed. Inverse of `resolve_field`, used to alias a rewritten field's
+/// result back under the field name the caller originally wrote.
+fn set_field(row: &mut serde_json::Value, field: &str, value: String) {
+    let parts: Vec<&str> = field.split('.').collect();
+    let mut current = row;
+
+    for (i, part) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            if let serde_json::Value::Object(map) = current {
+                map.insert((*part).to_string(), serde_json::Value::String(value));
+            }
+            return;
+        }
+
+        if !current.is_object() {
+            return;
+        }
+        current = current
+            .as_object_mut()
+            .expect("checked is_object above")
+            .entry((*part).to_string())
+            .or_insert_with(|| serde_json::json!({}));
+    }
+}
+
+/// After `rewrite_deprecated_date_fields` substituted `actual_field` for
+/// `deprecated_field` in the query sent to the API, inject the result back
+/// into each row under `deprecated_field`'s own resolution path — truncated to
+/// its date portion, since the deprecated field was a bare date, not a
+/// timestamp. A row where `actual_field` is absent (e.g. a campaign with no
+/// end date) is left untouched rather than aliased to an empty value.
+pub fn alias_date_time_as_date(
+    rows: &mut [serde_json::Value],
+    deprecated_field: &str,
+    actual_field: &str,
+) {
+    for row in rows.iter_mut() {
+        let value = resolve_field(row, actual_field);
+        if value.is_empty() {
+            continue;
+        }
+        let date_only = value.split(' ').next().unwrap_or(&value).to_string();
+        set_field(row, deprecated_field, date_only);
+    }
+}
+
 /// Common GAQL error hints mapping error substrings to human-readable suggestions.
 static ERROR_HINTS: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     let mut m = HashMap::new();
@@ -518,5 +599,62 @@ mod tests {
         // A trailing underscore must not panic nor swallow characters.
         assert_eq!(snake_to_camel("trailing_"), "trailing");
         assert_eq!(snake_to_camel("_leading"), "Leading");
+    }
+
+    #[test]
+    fn test_rewrite_deprecated_date_fields_rewrites_both() {
+        let (rewritten, applied) = rewrite_deprecated_date_fields(
+            "SELECT campaign.id, campaign.start_date, campaign.end_date FROM campaign",
+        );
+        assert_eq!(
+            rewritten,
+            "SELECT campaign.id, campaign.start_date_time, campaign.end_date_time FROM campaign"
+        );
+        assert_eq!(
+            applied,
+            vec![
+                ("campaign.start_date", "campaign.start_date_time"),
+                ("campaign.end_date", "campaign.end_date_time"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_rewrite_deprecated_date_fields_leaves_already_correct_query_untouched() {
+        let query =
+            "SELECT campaign.id, campaign.start_date_time, campaign.end_date_time FROM campaign";
+        let (rewritten, applied) = rewrite_deprecated_date_fields(query);
+        // The critical case: a naive substring replace would corrupt
+        // `start_date_time` into `start_date_time_time`.
+        assert_eq!(rewritten, query);
+        assert!(applied.is_empty());
+    }
+
+    #[test]
+    fn test_rewrite_deprecated_date_fields_no_match() {
+        let query = "SELECT campaign.id, campaign.name FROM campaign";
+        let (rewritten, applied) = rewrite_deprecated_date_fields(query);
+        assert_eq!(rewritten, query);
+        assert!(applied.is_empty());
+    }
+
+    #[test]
+    fn test_alias_date_time_as_date_truncates_to_date_portion() {
+        let mut rows = vec![serde_json::json!({
+            "campaign": {"id": "1", "startDateTime": "2026-10-09 12:57:49"}
+        })];
+        alias_date_time_as_date(&mut rows, "campaign.start_date", "campaign.start_date_time");
+        assert_eq!(resolve_field(&rows[0], "campaign.start_date"), "2026-10-09");
+    }
+
+    #[test]
+    fn test_alias_date_time_as_date_skips_absent_field() {
+        // A campaign with no end date, as Google Ads actually returns it: the
+        // field is absent from the row entirely, not null.
+        let mut rows = vec![serde_json::json!({
+            "campaign": {"id": "1", "startDateTime": "2026-10-09 12:57:49"}
+        })];
+        alias_date_time_as_date(&mut rows, "campaign.end_date", "campaign.end_date_time");
+        assert_eq!(resolve_field(&rows[0], "campaign.end_date"), "");
     }
 }
