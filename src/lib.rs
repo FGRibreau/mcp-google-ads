@@ -392,6 +392,30 @@ pub struct SetCampaignGeoTargetTypeToolParams {
     pub negative_geo_target_type: Option<models::GeoTargetType>,
 }
 
+/// Parameters for setting bid adjustments on a campaign's criteria.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetCampaignBidModifiersToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID whose criteria to adjust.
+    pub campaign_id: String,
+    /// The adjustments: each one a device, or an existing location or ad schedule criterion ID, with its bid modifier.
+    pub bid_modifiers: Vec<tools::campaign_criteria_write::BidModifierInput>,
+}
+
+/// Parameters for removing a targeted language from a campaign.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveLanguageTargetToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID to remove the language target from.
+    pub campaign_id: String,
+    /// The language constant ID ("1002") or resource name ("languageConstants/1002").
+    pub language_id: String,
+}
+
 /// Parameters for setting what a campaign optimises on.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1583,6 +1607,54 @@ impl GoogleAdsMcp {
             params.goal_config_level,
             &params.campaign_conversion_goals.unwrap_or_default(),
             params.custom_conversion_goal_id.as_deref(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Set bid adjustments on a campaign's criteria. Each entry names a device (DESKTOP, MOBILE, TABLET) or the criterion_id of a location or ad schedule the campaign already targets (a location's criterion ID is its geo target constant ID; read ad schedule IDs with run_gaql on campaign_criterion), with a bid_modifier between 0.1 and 10.0 (1.2 = +20 %); 0 excludes a device. Smart Bidding strategies ignore every adjustment but a device exclusion. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_bid_modifiers(
+        &self,
+        Parameters(params): Parameters<SetCampaignBidModifiersToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::campaign_criteria_write::set_campaign_bid_modifiers(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.bid_modifiers,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Remove a targeted language from a campaign. Destructive — requires confirmed_twice. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn remove_language_target(
+        &self,
+        Parameters(params): Parameters<RemoveLanguageTargetToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::campaign_criteria_write::remove_language_target(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.language_id,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),

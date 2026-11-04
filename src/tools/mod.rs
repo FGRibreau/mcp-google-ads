@@ -6,6 +6,7 @@ pub mod assets;
 pub mod audiences;
 pub mod bidding;
 pub mod budget;
+pub mod campaign_criteria_write;
 pub mod campaigns;
 pub mod campaigns_write;
 pub mod confirm;
