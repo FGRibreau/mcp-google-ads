@@ -392,6 +392,24 @@ pub struct SetCampaignGeoTargetTypeToolParams {
     pub negative_geo_target_type: Option<models::GeoTargetType>,
 }
 
+/// Parameters for setting what a campaign optimises on.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetCampaignConversionGoalsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID whose conversion goals to set.
+    pub campaign_id: String,
+    /// CUSTOMER: the campaign follows the account default goals. CAMPAIGN: it carries
+    /// its own goals (campaign_conversion_goals) or a custom goal (custom_conversion_goal_id).
+    pub goal_config_level: models::GoalConfigLevel,
+    /// At CAMPAIGN level without a custom goal: the (category, origin) goals whose biddable
+    /// flag to set, at least one biddable. Goals left out keep their state.
+    pub campaign_conversion_goals: Option<Vec<models::CampaignConversionGoalInput>>,
+    /// At CAMPAIGN level: the ID of an existing custom conversion goal to optimise on.
+    pub custom_conversion_goal_id: Option<String>,
+}
+
 /// Parameters for drafting sitelink extensions.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1539,6 +1557,32 @@ impl GoogleAdsMcp {
             &params.campaign_id,
             params.positive_geo_target_type,
             params.negative_geo_target_type,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Set what a campaign optimises on. goal_config_level=CUSTOMER follows the account default conversion goals. goal_config_level=CAMPAIGN with campaign_conversion_goals sets which (category, origin) goals of the campaign are biddable (goals left out keep their state; at least one biddable). goal_config_level=CAMPAIGN with custom_conversion_goal_id optimises on an existing custom conversion goal instead. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_conversion_goals(
+        &self,
+        Parameters(params): Parameters<SetCampaignConversionGoalsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::conversion_goals_write::set_campaign_conversion_goals(
+            &config,
+            &cid,
+            &params.campaign_id,
+            params.goal_config_level,
+            &params.campaign_conversion_goals.unwrap_or_default(),
+            params.custom_conversion_goal_id.as_deref(),
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),

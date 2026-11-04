@@ -9,6 +9,7 @@ pub mod budget;
 pub mod campaigns;
 pub mod campaigns_write;
 pub mod confirm;
+pub mod conversion_goals_write;
 pub mod conversions;
 pub mod demographics;
 pub mod entity_lifecycle;
