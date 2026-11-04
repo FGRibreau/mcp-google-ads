@@ -414,6 +414,21 @@ pub struct SetCampaignGeoTargetTypeToolParams {
     pub negative_geo_target_type: Option<models::GeoTargetType>,
 }
 
+/// Parameters for adding audiences to an ad group.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddAdGroupAudiencesToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The ad group ID to add audiences to.
+    pub ad_group_id: String,
+    /// The audiences to add, each targeted or excluded (negative).
+    pub audiences: Option<Vec<tools::audiences::AdGroupAudienceInput>>,
+    /// How the ad group's targeted audiences apply: TARGETING restricts delivery to them,
+    /// OBSERVATION only observes them. Omit to keep the current setting.
+    pub targeting_mode: Option<String>,
+}
+
 /// Parameters for setting bid adjustments on a campaign's criteria.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1711,6 +1726,53 @@ impl GoogleAdsMcp {
         }
     }
 
+    #[tool(
+        description = "Add audiences to an ad group, each targeted or excluded (negative): USER_LIST (remarketing, customer list), USER_INTEREST (affinity or in-market segment), CUSTOM_AUDIENCE or COMBINED_AUDIENCE, by numeric ID. targeting_mode sets how the ad group's targeted audiences apply: TARGETING restricts delivery to them, OBSERVATION only observes them. Remove an audience with remove_keywords and its criterion ID. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_ad_group_audiences(
+        &self,
+        Parameters(params): Parameters<AddAdGroupAudiencesToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        // Google replaces the whole restriction list: read it first so that only
+        // the AUDIENCE entry changes.
+        let existing_restrictions = if params.targeting_mode.is_some() {
+            let client = match GoogleAdsClient::new(&config) {
+                Ok(c) => c,
+                Err(e) => return e.to_json().to_string(),
+            };
+            match tools::audiences::resolve_ad_group_target_restrictions(
+                &client,
+                &cid,
+                &params.ad_group_id,
+            )
+            .await
+            {
+                Ok(restrictions) => restrictions,
+                Err(e) => return e.to_json().to_string(),
+            }
+        } else {
+            Vec::new()
+        };
+
+        match tools::audiences::add_ad_group_audiences(
+            &config,
+            &cid,
+            &params.ad_group_id,
+            &params.audiences.unwrap_or_default(),
+            params.targeting_mode.as_deref(),
+            &existing_restrictions,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
     // ── Demographics ─────────────────────────────────────────────────────
 
     #[tool(
@@ -1873,7 +1935,7 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Draft REMOVING keywords from an ad group by criterion IDs (IRREVERSIBLE)."
+        description = "Draft REMOVING ad group criteria by criterion IDs (IRREVERSIBLE): keywords, negative keywords and audiences of the ad group alike."
     )]
     async fn remove_keywords(
         &self,

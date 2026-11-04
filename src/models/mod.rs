@@ -2,6 +2,7 @@
 
 pub mod ad_rotation_mode;
 pub mod ad_status;
+pub mod audience;
 pub mod conversion_goal;
 pub mod demographic;
 pub mod device;
@@ -12,6 +13,7 @@ pub mod target_impression_share;
 
 pub use ad_rotation_mode::AdRotationMode;
 pub use ad_status::AdStatus;
+pub use audience::AudienceKind;
 pub use conversion_goal::{
     CampaignConversionGoalInput, ConversionActionCategory, ConversionOrigin, GoalConfigLevel,
 };
