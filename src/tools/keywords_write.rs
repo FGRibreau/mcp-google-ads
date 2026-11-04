@@ -1,3 +1,7 @@
+use std::collections::HashSet;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::config::Config;
@@ -17,6 +21,119 @@ pub struct KeywordWithMatchType {
 }
 
 const VALID_MATCH_TYPES: &[&str] = &["EXACT", "PHRASE", "BROAD"];
+
+/// Google Ads caps a keyword at 80 characters and 10 words.
+const MAX_KEYWORD_LEN: usize = 80;
+const MAX_KEYWORD_WORDS: usize = 10;
+
+/// A negative keyword with its own match type.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NegativeKeywordInput {
+    /// The excluded text, without match type operators.
+    pub text: String,
+    /// EXACT, PHRASE or BROAD.
+    pub match_type: String,
+}
+
+/// Draft negative keywords on an ad group, each with its own match type.
+///
+/// Creates one `adGroupCriterionOperation` with `negative: true` per keyword.
+/// Campaign-level negatives go through `add_negative_keywords`; remove an ad
+/// group negative with `remove_keywords` and its criterion ID.
+///
+/// Returns a ChangePlan preview that must be confirmed via `confirm_and_apply`.
+pub fn add_ad_group_negative_keywords(
+    config: &Config,
+    customer_id: &str,
+    ad_group_id: &str,
+    keywords: &[NegativeKeywordInput],
+) -> Result<serde_json::Value> {
+    check_blocked_operation("add_ad_group_negative_keywords", &config.safety)?;
+
+    if keywords.is_empty() {
+        return Err(McpGoogleAdsError::Validation(
+            "At least one keyword is required".to_string(),
+        ));
+    }
+    let mut seen = HashSet::new();
+    for kw in keywords {
+        let text = kw.text.trim();
+        if text.is_empty() {
+            return Err(McpGoogleAdsError::Validation(
+                "A negative keyword must not be empty".to_string(),
+            ));
+        }
+        if text.chars().count() > MAX_KEYWORD_LEN
+            || text.split_whitespace().count() > MAX_KEYWORD_WORDS
+        {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "Negative keyword '{text}' exceeds {MAX_KEYWORD_LEN} characters or {MAX_KEYWORD_WORDS} words"
+            )));
+        }
+        if !VALID_MATCH_TYPES.contains(&kw.match_type.as_str()) {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "Invalid match type '{}'. Must be one of: {}",
+                kw.match_type,
+                VALID_MATCH_TYPES.join(", ")
+            )));
+        }
+        let normalized = text
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        if !seen.insert((normalized, kw.match_type.clone())) {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "Negative keyword '{text}' ({}) appears twice",
+                kw.match_type
+            )));
+        }
+    }
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let ad_group_resource = format!("customers/{}/adGroups/{}", cid, ad_group_id);
+
+    let operations: Vec<serde_json::Value> = keywords
+        .iter()
+        .map(|kw| {
+            json!({
+                "adGroupCriterionOperation": {
+                    "create": {
+                        "adGroup": ad_group_resource,
+                        "negative": true,
+                        "keyword": {
+                            "text": kw.text.trim(),
+                            "matchType": kw.match_type
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    let changes = json!({
+        "ad_group_id": ad_group_id,
+        "negative_keywords": keywords.iter().map(|kw| json!({
+            "text": kw.text.trim(),
+            "match_type": kw.match_type,
+        })).collect::<Vec<_>>(),
+    });
+
+    let plan = ChangePlan::new(
+        "add_ad_group_negative_keywords".to_string(),
+        "ad_group_criterion".to_string(),
+        ad_group_id.to_string(),
+        cid,
+        changes,
+        false,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
 
 /// Draft keywords to add to an ad group.
 ///

@@ -414,6 +414,18 @@ pub struct SetCampaignGeoTargetTypeToolParams {
     pub negative_geo_target_type: Option<models::GeoTargetType>,
 }
 
+/// Parameters for adding negative keywords to an ad group.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddAdGroupNegativeKeywordsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The ad group ID to add negative keywords to.
+    pub ad_group_id: String,
+    /// The negative keywords, each with its own match type.
+    pub keywords: Vec<tools::keywords_write::NegativeKeywordInput>,
+}
+
 /// Parameters for adding audiences to an ad group.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1720,6 +1732,30 @@ impl GoogleAdsMcp {
             &cid,
             &params.campaign_id,
             &params.language_id,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Add negative keywords to an ad group, each with its own match type (EXACT, PHRASE, BROAD). Campaign-level negatives go through add_negative_keywords; remove an ad group negative with remove_keywords and its criterion ID. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_ad_group_negative_keywords(
+        &self,
+        Parameters(params): Parameters<AddAdGroupNegativeKeywordsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::keywords_write::add_ad_group_negative_keywords(
+            &config,
+            &cid,
+            &params.ad_group_id,
+            &params.keywords,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
