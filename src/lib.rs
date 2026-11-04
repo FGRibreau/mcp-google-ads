@@ -126,6 +126,28 @@ pub struct DraftCampaignToolParams {
     pub target_impression_share_location: Option<models::TargetImpressionShareLocation>,
     /// Target impression share in percent (e.g. 80.0), required for TARGET_IMPRESSION_SHARE.
     pub target_impression_share_percent: Option<f64>,
+    /// Networks of a SEARCH campaign (Google Search, search partners, Display Network expansion).
+    /// Defaults to Google Search only.
+    pub network_settings: Option<tools::campaigns_write::NetworkSettingsInput>,
+    /// Whether to create the default ad group (ad_group_name, keywords) with the campaign.
+    /// Defaults to true; false creates the campaign alone, its ad groups then come from create_ad_group.
+    pub with_ad_group: Option<bool>,
+}
+
+/// Parameters for changing the networks of a Search campaign.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetCampaignNetworkSettingsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID whose networks to change.
+    pub campaign_id: String,
+    /// Google Search.
+    pub target_google_search: Option<bool>,
+    /// Google search partners.
+    pub target_search_network: Option<bool>,
+    /// Display Network expansion.
+    pub target_content_network: Option<bool>,
 }
 
 /// Parameters for updating an existing campaign.
@@ -1149,7 +1171,7 @@ impl GoogleAdsMcp {
     // ── Write tools ──────────────────────────────────────────────────────
 
     #[tool(
-        description = "Draft a new campaign (PAUSED) with budget, ad group, and optional keywords. Returns a preview — call confirm_and_apply to execute."
+        description = "Draft a new campaign (PAUSED) with budget, networks, ad group (with_ad_group=false creates the campaign alone), and optional keywords. Returns a preview — call confirm_and_apply to execute."
     )]
     async fn draft_campaign(
         &self,
@@ -1187,6 +1209,8 @@ impl GoogleAdsMcp {
             cpc_bid_ceiling: params.cpc_bid_ceiling,
             target_impression_share_location: params.target_impression_share_location,
             target_impression_share_percent: params.target_impression_share_percent,
+            network_settings: params.network_settings,
+            with_ad_group: params.with_ad_group.unwrap_or(true),
         }) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
@@ -1556,6 +1580,32 @@ impl GoogleAdsMcp {
             &cid,
             &params.campaign_id,
             &params.geo_target_id,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Change the networks of a Search campaign: target_google_search (Google Search), target_search_network (search partners), target_content_network (Display Network expansion). Networks left out keep their state; at least one must be given. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_network_settings(
+        &self,
+        Parameters(params): Parameters<SetCampaignNetworkSettingsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::campaigns_write::set_campaign_network_settings(
+            &config,
+            &cid,
+            &params.campaign_id,
+            params.target_google_search,
+            params.target_search_network,
+            params.target_content_network,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),

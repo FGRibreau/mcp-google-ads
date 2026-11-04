@@ -51,6 +51,8 @@ async fn budget_and_target_cpa_reach_google_as_exact_micros() {
         cpc_bid_ceiling: None,
         target_impression_share_location: None,
         target_impression_share_percent: None,
+        network_settings: None,
+        with_ad_group: true,
         status: None,
     })
     .expect("plan builds");

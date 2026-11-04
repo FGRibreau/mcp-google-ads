@@ -256,6 +256,8 @@ async fn test_draft_campaign_dry_run() {
             cpc_bid_ceiling: None,
             target_impression_share_location: None,
             target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         },
     );
@@ -361,6 +363,8 @@ async fn test_budget_cap_blocks_excessive_budget() {
             cpc_bid_ceiling: None,
             target_impression_share_location: None,
             target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         },
     );

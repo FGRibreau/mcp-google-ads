@@ -50,6 +50,8 @@ fn draft<'a>(config: &'a Config, strategy: &'a str, values: Values) -> DraftCamp
         cpc_bid_ceiling: values.2,
         target_impression_share_location: values.3,
         target_impression_share_percent: values.4,
+        network_settings: None,
+        with_ad_group: true,
     }
 }
 

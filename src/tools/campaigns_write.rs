@@ -14,6 +14,18 @@ use crate::safety::guards::{
 };
 use crate::safety::preview::{store_plan, ChangePlan};
 
+/// The networks of a Search campaign (`Campaign.network_settings`).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkSettingsInput {
+    /// Google Search.
+    pub target_google_search: bool,
+    /// Google search partners.
+    pub target_search_network: bool,
+    /// Display Network expansion.
+    pub target_content_network: bool,
+}
+
 /// Parameters for drafting a new campaign.
 ///
 /// `status` defaults to [`AdStatus::Paused`] when `None` — newly drafted
@@ -46,6 +58,11 @@ pub struct DraftCampaignParams<'a> {
     pub target_impression_share_location: Option<TargetImpressionShareLocation>,
     /// Target impression share in percent, for TARGET_IMPRESSION_SHARE.
     pub target_impression_share_percent: Option<f64>,
+    /// Networks of a SEARCH campaign. `None` -> Google Search only.
+    pub network_settings: Option<NetworkSettingsInput>,
+    /// Whether to create the default ad group (and its keywords) with the campaign.
+    /// `false` creates the campaign alone; its ad groups are created with `create_ad_group`.
+    pub with_ad_group: bool,
 }
 
 impl DraftCampaignParams<'_> {
@@ -70,6 +87,19 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
     check_budget_cap(params.daily_budget, &params.config.safety)?;
     check_blocked_operation("draft_campaign", &params.config.safety)?;
     validate_campaign_date_times(params.start_date_time, params.end_date_time)?;
+    if params.network_settings.is_some() && params.channel_type != "SEARCH" {
+        return Err(crate::error::McpGoogleAdsError::Validation(format!(
+            "network_settings only apply to a SEARCH campaign, not {}",
+            params.channel_type
+        )));
+    }
+    if !params.with_ad_group && !params.keywords.is_empty() {
+        return Err(crate::error::McpGoogleAdsError::Validation(
+            "keywords belong to the default ad group: pass with_ad_group=true, or add them \
+             with draft_keywords once the ad group is created"
+                .to_string(),
+        ));
+    }
 
     let cid = crate::client::GoogleAdsClient::normalize_customer_id(params.customer_id);
     let mut operations: Vec<serde_json::Value> = Vec::new();
@@ -114,7 +144,16 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         campaign_create["endDateTime"] = json!(end);
     }
 
-    if let Some(network_settings) = network_settings_for_channel(params.channel_type) {
+    let network_settings = match params.network_settings {
+        Some(networks) => Some(json!({
+            "targetGoogleSearch": networks.target_google_search,
+            "targetSearchNetwork": networks.target_search_network,
+            "targetContentNetwork": networks.target_content_network,
+            "targetPartnerSearchNetwork": false
+        })),
+        None => network_settings_for_channel(params.channel_type),
+    };
+    if let Some(network_settings) = network_settings {
         campaign_create
             .as_object_mut()
             .map(|o| o.insert("networkSettings".to_string(), network_settings));
@@ -161,47 +200,49 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         }));
     }
 
-    // 5. Ad group (temp resource ID -3)
-    let ad_group_resource = format!("customers/{}/adGroups/-3", cid);
-    let ad_group_type = match params.channel_type {
-        "SEARCH" => "SEARCH_STANDARD",
-        "DISPLAY" => "DISPLAY_STANDARD",
-        _ => "SEARCH_STANDARD",
-    };
-    // Ad group inherits the campaign-level status — keeping both PAUSED
-    // (or both ENABLED) avoids a half-running campaign state.
-    operations.push(json!({
-        "adGroupOperation": {
-            "create": {
-                "name": params.ad_group_name,
-                "campaign": campaign_resource,
-                "status": campaign_status.as_api_str(),
-                "type": ad_group_type,
-                "resourceName": ad_group_resource
-            }
-        }
-    }));
-
-    // 6. Keywords (optional)
-    for kw in &params.keywords {
-        let mut criterion = json!({
-            "adGroup": ad_group_resource,
-            "keyword": {
-                "text": kw.text,
-                "matchType": kw.match_type
-            }
-        });
-        if let Some(ref url) = kw.final_url {
-            validate_final_url(url)?;
-            if let Some(obj) = criterion.as_object_mut() {
-                obj.insert("finalUrls".to_string(), json!([url]));
-            }
-        }
+    if params.with_ad_group {
+        // 5. Ad group (temp resource ID -3)
+        let ad_group_resource = format!("customers/{}/adGroups/-3", cid);
+        let ad_group_type = match params.channel_type {
+            "SEARCH" => "SEARCH_STANDARD",
+            "DISPLAY" => "DISPLAY_STANDARD",
+            _ => "SEARCH_STANDARD",
+        };
+        // Ad group inherits the campaign-level status — keeping both PAUSED
+        // (or both ENABLED) avoids a half-running campaign state.
         operations.push(json!({
-            "adGroupCriterionOperation": {
-                "create": criterion
+            "adGroupOperation": {
+                "create": {
+                    "name": params.ad_group_name,
+                    "campaign": campaign_resource,
+                    "status": campaign_status.as_api_str(),
+                    "type": ad_group_type,
+                    "resourceName": ad_group_resource
+                }
             }
         }));
+
+        // 6. Keywords (optional)
+        for kw in &params.keywords {
+            let mut criterion = json!({
+                "adGroup": ad_group_resource,
+                "keyword": {
+                    "text": kw.text,
+                    "matchType": kw.match_type
+                }
+            });
+            if let Some(ref url) = kw.final_url {
+                validate_final_url(url)?;
+                if let Some(obj) = criterion.as_object_mut() {
+                    obj.insert("finalUrls".to_string(), json!([url]));
+                }
+            }
+            operations.push(json!({
+                "adGroupCriterionOperation": {
+                    "create": criterion
+                }
+            }));
+        }
     }
 
     let changes = json!({
@@ -211,8 +252,13 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         "target_cpa": params.target_cpa,
         "target_roas": params.target_roas,
         "channel_type": params.channel_type,
-        "ad_group_name": params.ad_group_name,
+        "ad_group_name": params.with_ad_group.then_some(params.ad_group_name),
         "keywords_count": params.keywords.len(),
+        "network_settings": params.network_settings.map(|n| json!({
+            "target_google_search": n.target_google_search,
+            "target_search_network": n.target_search_network,
+            "target_content_network": n.target_content_network,
+        })),
         "geo_targets": params.geo_target_ids,
         "languages": params.language_ids,
         "status": campaign_status.as_api_str(),
@@ -571,6 +617,83 @@ pub struct KeywordInput {
     pub final_url: Option<String>,
 }
 
+/// Draft changing the networks of a Search campaign (`Campaign.network_settings`).
+///
+/// Each network given is set and masked; a network left out keeps its state. At
+/// least one must be given.
+///
+/// Returns a [`ChangePlan`] preview to confirm via `confirm_and_apply`.
+pub fn set_campaign_network_settings(
+    config: &Config,
+    customer_id: &str,
+    campaign_id: &str,
+    target_google_search: Option<bool>,
+    target_search_network: Option<bool>,
+    target_content_network: Option<bool>,
+) -> Result<serde_json::Value> {
+    check_blocked_operation("set_campaign_network_settings", &config.safety)?;
+
+    let networks = [
+        (
+            "targetGoogleSearch",
+            "target_google_search",
+            target_google_search,
+        ),
+        (
+            "targetSearchNetwork",
+            "target_search_network",
+            target_search_network,
+        ),
+        (
+            "targetContentNetwork",
+            "target_content_network",
+            target_content_network,
+        ),
+    ];
+    let mut settings = serde_json::Map::new();
+    let mut update_mask_fields: Vec<String> = Vec::new();
+    let mut changes = serde_json::Map::new();
+    for (api_field, param, value) in networks {
+        if let Some(value) = value {
+            settings.insert(api_field.to_string(), json!(value));
+            update_mask_fields.push(format!("networkSettings.{api_field}"));
+            changes.insert(param.to_string(), json!(value));
+        }
+    }
+    if update_mask_fields.is_empty() {
+        return Err(crate::error::McpGoogleAdsError::Validation(
+            "No network specified; set target_google_search, target_search_network and/or \
+             target_content_network"
+                .to_string(),
+        ));
+    }
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let operations = vec![json!({
+        "campaignOperation": {
+            "update": {
+                "resourceName": format!("customers/{}/campaigns/{}", cid, campaign_id),
+                "networkSettings": serde_json::Value::Object(settings)
+            },
+            "updateMask": update_mask_fields.join(",")
+        }
+    })];
+
+    let plan = ChangePlan::new(
+        "set_campaign_network_settings".to_string(),
+        "campaign".to_string(),
+        campaign_id.to_string(),
+        cid,
+        serde_json::Value::Object(changes),
+        false,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
 /// Build the `networkSettings` payload appropriate for an advertising channel.
 ///
 /// The settings must match the channel: a DISPLAY campaign with
@@ -846,6 +969,8 @@ mod tests {
             cpc_bid_ceiling: None,
             target_impression_share_location: None,
             target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         });
 
@@ -877,6 +1002,8 @@ mod tests {
             cpc_bid_ceiling: None,
             target_impression_share_location: None,
             target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         });
 
@@ -911,6 +1038,8 @@ mod tests {
             cpc_bid_ceiling: None,
             target_impression_share_location: None,
             target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         });
 
@@ -1071,6 +1200,8 @@ mod tests {
             cpc_bid_ceiling: None,
             target_impression_share_location: None,
             target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         })
         .unwrap();
@@ -1099,6 +1230,8 @@ mod tests {
             cpc_bid_ceiling: None,
             target_impression_share_location: None,
             target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: Some(AdStatus::Enabled),
         })
         .unwrap();
@@ -1128,6 +1261,8 @@ mod tests {
             cpc_bid_ceiling: None,
             target_impression_share_location: None,
             target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         })
         .unwrap();
@@ -1479,6 +1614,8 @@ mod tests {
             cpc_bid_ceiling: None,
             target_impression_share_location: None,
             target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         })
         .expect("ok");
@@ -1530,6 +1667,8 @@ mod tests {
             cpc_bid_ceiling: None,
             target_impression_share_location: None,
             target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         })
         .expect_err("invalid final_url rejected");
