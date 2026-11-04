@@ -31,8 +31,8 @@ Every write tool follows the same shape, split across two phases that never touc
 1. **Draft phase** (`src/tools/*_write.rs`, `src/tools/entity_lifecycle.rs`) — pure, synchronous, no network I/O. Validates input against safety guards (`src/safety/guards.rs`: budget cap, bid increase %, char limits, broad+manual-CPC block, URL/path validation), builds the raw Google Ads `MutateOperation` JSON payloads, wraps them in a `ChangePlan` (`src/safety/preview.rs`), and stores it in a process-global in-memory map (`PENDING_PLANS`, keyed by a short UUID `plan_id`). Returns a JSON preview, never executes anything.
 2. **Apply phase** (`src/tools/confirm.rs::confirm_and_apply`) — looks up the plan by `plan_id` and dispatches it. This is the only place that performs mutating HTTP calls.
 
-`confirm_and_apply` hard guards, checked **before any HTTP traffic**:
-- `dry_run` (default `true`) — returns the preview again with no mutation.
+`confirm_and_apply` modes and hard guards (the guards on a real apply are checked **before any HTTP traffic**):
+- `dry_run` (default `true`) — sends the plan to `googleAds:mutate` with `validateOnly: true`: Google validates it and applies nothing, and a rejection comes back as Google's error. Recommendation plans (no validate-only mode on their RPCs) are only previewed. The plan is kept either way.
 - `config.safety.require_dry_run` (env `GOOGLE_ADS_REQUIRE_DRY_RUN`, default `true`) — rejects `dry_run=false` unless the caller passes a one-shot `bypass_require_dry_run=true`.
 - `plan.requires_double_confirm` (set by `src/safety/guards.rs::requires_double_confirmation` — true for any `delete`/`remove` op or a >50% budget increase) — rejects unless `confirmed_twice=true`.
 

@@ -506,6 +506,30 @@ impl GoogleAdsClient {
         customer_id: &str,
         operations: Vec<MutateOperation>,
     ) -> Result<MutateResponse> {
+        self.send_mutate(customer_id, operations, false).await
+    }
+
+    /// Have Google validate a mutate request without applying it (`validateOnly`).
+    ///
+    /// Google checks the whole request as it would a real one (fields, update
+    /// masks, values, resources, business and policy rules) and answers with the
+    /// same errors, but writes nothing. `Ok` means Google would accept it now.
+    pub async fn validate_mutate(
+        &self,
+        customer_id: &str,
+        operations: Vec<MutateOperation>,
+    ) -> Result<()> {
+        self.send_mutate(customer_id, operations, true)
+            .await
+            .map(|_| ())
+    }
+
+    async fn send_mutate(
+        &self,
+        customer_id: &str,
+        operations: Vec<MutateOperation>,
+        validate_only: bool,
+    ) -> Result<MutateResponse> {
         Self::validate_mutate_operations(&operations).map_err(McpGoogleAdsError::Validation)?;
 
         let normalized_id = Self::normalize_customer_id(customer_id);
@@ -515,7 +539,7 @@ impl GoogleAdsClient {
         );
         let headers = self.build_headers().await?;
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "mutateOperations": operations,
             // Atomic on purpose: with partialFailure=true Google COMMITS the
             // operations that succeed and only reports errors for the rest, so a
@@ -526,6 +550,9 @@ impl GoogleAdsClient {
             // failing operation aborts the whole request and nothing is written.
             "partialFailure": false,
         });
+        if validate_only {
+            body["validateOnly"] = serde_json::json!(true);
+        }
 
         let response = self
             .http
