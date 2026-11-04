@@ -48,6 +48,9 @@ async fn budget_and_target_cpa_reach_google_as_exact_micros() {
         language_ids: vec![],
         start_date_time: None,
         end_date_time: None,
+        cpc_bid_ceiling: None,
+        target_impression_share_location: None,
+        target_impression_share_percent: None,
         status: None,
     })
     .expect("plan builds");

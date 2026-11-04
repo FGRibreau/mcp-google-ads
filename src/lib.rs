@@ -96,7 +96,8 @@ pub struct DraftCampaignToolParams {
     pub campaign_name: String,
     /// Daily budget in dollars (e.g. 50.0).
     pub daily_budget: f64,
-    /// Bidding strategy (e.g. MAXIMIZE_CONVERSIONS, TARGET_CPA, MANUAL_CPC).
+    /// Bidding strategy: MAXIMIZE_CONVERSIONS, MAXIMIZE_CONVERSION_VALUE, TARGET_CPA, TARGET_ROAS,
+    /// TARGET_SPEND (Maximize clicks), TARGET_IMPRESSION_SHARE or MANUAL_CPC. Each takes only its own values.
     pub bidding_strategy: String,
     /// Target CPA in dollars, if using TARGET_CPA or MAXIMIZE_CONVERSIONS.
     pub target_cpa: Option<f64>,
@@ -119,6 +120,12 @@ pub struct DraftCampaignToolParams {
     pub start_date_time: Option<String>,
     /// End of delivery, 'yyyy-MM-dd HH:mm:ss' in the account time zone (no offset). Defaults to no end.
     pub end_date_time: Option<String>,
+    /// Maximum CPC bid in account currency, for TARGET_SPEND (Maximize clicks) or TARGET_IMPRESSION_SHARE.
+    pub cpc_bid_ceiling: Option<f64>,
+    /// Page location, required for TARGET_IMPRESSION_SHARE: ANYWHERE_ON_PAGE, TOP_OF_PAGE or ABSOLUTE_TOP_OF_PAGE.
+    pub target_impression_share_location: Option<models::TargetImpressionShareLocation>,
+    /// Target impression share in percent (e.g. 80.0), required for TARGET_IMPRESSION_SHARE.
+    pub target_impression_share_percent: Option<f64>,
 }
 
 /// Parameters for updating an existing campaign.
@@ -145,6 +152,12 @@ pub struct UpdateCampaignToolParams {
     pub start_date_time: Option<String>,
     /// New end of delivery, 'yyyy-MM-dd HH:mm:ss' in the account time zone (no offset).
     pub end_date_time: Option<String>,
+    /// Maximum CPC bid in account currency, for TARGET_SPEND (Maximize clicks) or TARGET_IMPRESSION_SHARE.
+    pub cpc_bid_ceiling: Option<f64>,
+    /// Page location, required for TARGET_IMPRESSION_SHARE: ANYWHERE_ON_PAGE, TOP_OF_PAGE or ABSOLUTE_TOP_OF_PAGE.
+    pub target_impression_share_location: Option<models::TargetImpressionShareLocation>,
+    /// Target impression share in percent (e.g. 80.0), required for TARGET_IMPRESSION_SHARE.
+    pub target_impression_share_percent: Option<f64>,
 }
 
 /// Parameters for drafting a Responsive Search Ad.
@@ -1129,6 +1142,9 @@ impl GoogleAdsMcp {
             status: params.status,
             start_date_time: params.start_date_time.as_deref(),
             end_date_time: params.end_date_time.as_deref(),
+            cpc_bid_ceiling: params.cpc_bid_ceiling,
+            target_impression_share_location: params.target_impression_share_location,
+            target_impression_share_percent: params.target_impression_share_percent,
         }) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
@@ -1184,6 +1200,9 @@ impl GoogleAdsMcp {
                 language_ids: params.language_ids.unwrap_or_default(),
                 start_date_time: params.start_date_time.as_deref(),
                 end_date_time: params.end_date_time.as_deref(),
+                cpc_bid_ceiling: params.cpc_bid_ceiling,
+                target_impression_share_location: params.target_impression_share_location,
+                target_impression_share_percent: params.target_impression_share_percent,
             },
         ) {
             Ok(preview) => preview.to_string(),

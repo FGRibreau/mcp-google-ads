@@ -253,6 +253,9 @@ async fn test_draft_campaign_dry_run() {
             language_ids: vec!["1002".to_string()],   // French
             start_date_time: None,
             end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
             status: None,
         },
     );
@@ -355,6 +358,9 @@ async fn test_budget_cap_blocks_excessive_budget() {
             language_ids: vec!["1002".to_string()],
             start_date_time: None,
             end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
             status: None,
         },
     );

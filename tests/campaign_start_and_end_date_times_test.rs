@@ -37,6 +37,9 @@ fn draft<'a>(
         status: None,
         start_date_time: start,
         end_date_time: end,
+        cpc_bid_ceiling: None,
+        target_impression_share_location: None,
+        target_impression_share_percent: None,
     }
 }
 
@@ -59,6 +62,9 @@ fn update<'a>(
         language_ids: vec![],
         start_date_time: start,
         end_date_time: end,
+        cpc_bid_ceiling: None,
+        target_impression_share_location: None,
+        target_impression_share_percent: None,
     }
 }
 
