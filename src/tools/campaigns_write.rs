@@ -5,14 +5,9 @@ use serde_json::json;
 use crate::client::GoogleAdsClient;
 use crate::config::Config;
 use crate::error::Result;
-use crate::models::{AdStatus, GeoTargetType, NextActionHint};
+use crate::models::{to_micros, AdStatus, GeoTargetType, NextActionHint};
 use crate::safety::guards::{check_blocked_operation, check_budget_cap, validate_final_url};
 use crate::safety::preview::{store_plan, ChangePlan};
-
-/// Convert a dollar amount to micros (Google Ads uses micros: $1 = 1_000_000).
-fn dollars_to_micros(dollars: f64) -> i64 {
-    (dollars * 1_000_000.0) as i64
-}
 
 /// Parameters for drafting a new campaign.
 ///
@@ -57,7 +52,7 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         "campaignBudgetOperation": {
             "create": {
                 "name": format!("{} Budget", params.campaign_name),
-                "amountMicros": dollars_to_micros(params.daily_budget).to_string(),
+                "amountMicros": to_micros(params.daily_budget).to_string(),
                 "deliveryMethod": "STANDARD",
                 // The API defaults explicitly_shared to TRUE, and campaign-level
                 // Smart Bidding (e.g. maximizeConversions) is rejected on shared
@@ -262,7 +257,7 @@ pub fn update_campaign(params: &UpdateCampaignParams) -> Result<serde_json::Valu
             "campaignBudgetOperation": {
                 "update": {
                     "resourceName": budget_resource,
-                    "amountMicros": dollars_to_micros(budget).to_string()
+                    "amountMicros": to_micros(budget).to_string()
                 },
                 "updateMask": "amountMicros"
             }
@@ -538,7 +533,7 @@ fn apply_bidding_strategy(
                 mc.as_object_mut().map(|m| {
                     m.insert(
                         "targetCpaMicros".to_string(),
-                        json!(dollars_to_micros(cpa).to_string()),
+                        json!(to_micros(cpa).to_string()),
                     )
                 });
             }
@@ -556,7 +551,7 @@ fn apply_bidding_strategy(
             if let Some(cpa) = target_cpa {
                 obj.insert(
                     "targetCpa".to_string(),
-                    json!({ "targetCpaMicros": dollars_to_micros(cpa).to_string() }),
+                    json!({ "targetCpaMicros": to_micros(cpa).to_string() }),
                 );
             }
         }
@@ -612,7 +607,7 @@ fn apply_bidding_strategy_update(
             // Send the target explicitly so the masked leaf always exists.
             // 0 means "no target CPA" — how the API expresses plain Maximize
             // Conversions.
-            let cpa_micros = target_cpa.map(dollars_to_micros).unwrap_or(0);
+            let cpa_micros = target_cpa.map(to_micros).unwrap_or(0);
             obj.insert(
                 "maximizeConversions".to_string(),
                 json!({ "targetCpaMicros": cpa_micros.to_string() }),
@@ -632,7 +627,7 @@ fn apply_bidding_strategy_update(
             if let Some(cpa) = target_cpa {
                 obj.insert(
                     "targetCpa".to_string(),
-                    json!({ "targetCpaMicros": dollars_to_micros(cpa).to_string() }),
+                    json!({ "targetCpaMicros": to_micros(cpa).to_string() }),
                 );
                 update_mask_fields.push("targetCpa.targetCpaMicros".to_string());
             }
@@ -667,13 +662,6 @@ fn apply_bidding_strategy_update(
 mod tests {
     use super::*;
     use crate::config::Config;
-
-    #[test]
-    fn test_dollars_to_micros() {
-        assert_eq!(dollars_to_micros(1.0), 1_000_000);
-        assert_eq!(dollars_to_micros(50.0), 50_000_000);
-        assert_eq!(dollars_to_micros(0.5), 500_000);
-    }
 
     #[test]
     fn test_draft_campaign_budget_cap_exceeded() {

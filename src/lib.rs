@@ -489,7 +489,9 @@ pub struct CreateAdGroupToolParams {
     pub campaign_id: String,
     /// Name for the new ad group.
     pub ad_group_name: String,
-    /// Optional CPC bid in micros (1 dollar = 1_000_000 micros).
+    /// Optional CPC bid in units of the account currency (e.g. 1.5). Preferred over cpc_bid_micros.
+    pub cpc_bid: Option<f64>,
+    /// Optional CPC bid in micros (1 currency unit = 1_000_000 micros). Use cpc_bid instead.
     pub cpc_bid_micros: Option<i64>,
     /// Lifecycle status. Defaults to `PAUSED` for safety (was `ENABLED` in
     /// v0.2.x — corrected for consistency with the other write tools).
@@ -506,7 +508,9 @@ pub struct UpdateAdGroupToolParams {
     pub ad_group_id: String,
     /// New name for the ad group.
     pub name: Option<String>,
-    /// New CPC bid in micros.
+    /// New CPC bid in units of the account currency (e.g. 1.5). Preferred over cpc_bid_micros.
+    pub cpc_bid: Option<f64>,
+    /// New CPC bid in micros. Use cpc_bid instead.
     pub cpc_bid_micros: Option<i64>,
     /// Ad rotation mode: OPTIMIZE (serve best-performing ad) or
     /// ROTATE_FOREVER ("Rotate indefinitely" in the Google Ads UI).
@@ -1031,12 +1035,17 @@ impl GoogleAdsMcp {
         }
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         let config = self.config.clone();
+        let cpc_bid_micros =
+            match models::resolve_micros(params.cpc_bid, params.cpc_bid_micros, "cpc_bid") {
+                Ok(micros) => micros,
+                Err(e) => return e.to_json().to_string(),
+            };
         match tools::ad_groups_write::create_ad_group(
             &config,
             &cid,
             &params.campaign_id,
             &params.ad_group_name,
-            params.cpc_bid_micros,
+            cpc_bid_micros,
             params.status,
         ) {
             Ok(preview) => preview.to_string(),
@@ -1056,12 +1065,17 @@ impl GoogleAdsMcp {
         }
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         let config = self.config.clone();
+        let cpc_bid_micros =
+            match models::resolve_micros(params.cpc_bid, params.cpc_bid_micros, "cpc_bid") {
+                Ok(micros) => micros,
+                Err(e) => return e.to_json().to_string(),
+            };
         match tools::ad_groups_write::update_ad_group(
             &config,
             &cid,
             &params.ad_group_id,
             params.name.as_deref(),
-            params.cpc_bid_micros,
+            cpc_bid_micros,
             params.ad_rotation_mode,
         ) {
             Ok(preview) => preview.to_string(),
