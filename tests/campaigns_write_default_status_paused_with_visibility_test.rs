@@ -20,6 +20,8 @@ fn p<'a>(config: &'a Config, status: Option<AdStatus>) -> DraftCampaignParams<'a
         keywords: vec![],
         geo_target_ids: vec![],
         language_ids: vec![],
+        start_date_time: None,
+        end_date_time: None,
         status,
     }
 }

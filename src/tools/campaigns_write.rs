@@ -6,7 +6,9 @@ use crate::client::GoogleAdsClient;
 use crate::config::Config;
 use crate::error::Result;
 use crate::models::{to_micros, AdStatus, GeoTargetType, NextActionHint};
-use crate::safety::guards::{check_blocked_operation, check_budget_cap, validate_final_url};
+use crate::safety::guards::{
+    check_blocked_operation, check_budget_cap, validate_campaign_date_times, validate_final_url,
+};
 use crate::safety::preview::{store_plan, ChangePlan};
 
 /// Parameters for drafting a new campaign.
@@ -31,6 +33,10 @@ pub struct DraftCampaignParams<'a> {
     pub language_ids: Vec<String>,
     /// Lifecycle status to create the campaign in. `None` -> default `PAUSED`.
     pub status: Option<AdStatus>,
+    /// Start of delivery, `yyyy-MM-dd HH:mm:ss` in the account time zone. `None` -> Google's default (today).
+    pub start_date_time: Option<&'a str>,
+    /// End of delivery, `yyyy-MM-dd HH:mm:ss` in the account time zone. `None` -> no end.
+    pub end_date_time: Option<&'a str>,
 }
 
 /// Draft a new campaign with budget, ad group, and optional keywords.
@@ -42,6 +48,7 @@ pub struct DraftCampaignParams<'a> {
 pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value> {
     check_budget_cap(params.daily_budget, &params.config.safety)?;
     check_blocked_operation("draft_campaign", &params.config.safety)?;
+    validate_campaign_date_times(params.start_date_time, params.end_date_time)?;
 
     let cid = crate::client::GoogleAdsClient::normalize_customer_id(params.customer_id);
     let mut operations: Vec<serde_json::Value> = Vec::new();
@@ -78,6 +85,13 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         // running political ads must change this in the UI after creation.
         "containsEuPoliticalAdvertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"
     });
+
+    if let Some(start) = params.start_date_time {
+        campaign_create["startDateTime"] = json!(start);
+    }
+    if let Some(end) = params.end_date_time {
+        campaign_create["endDateTime"] = json!(end);
+    }
 
     if let Some(network_settings) = network_settings_for_channel(params.channel_type) {
         campaign_create
@@ -181,7 +195,9 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         "keywords_count": params.keywords.len(),
         "geo_targets": params.geo_target_ids,
         "languages": params.language_ids,
-        "status": campaign_status.as_api_str()
+        "status": campaign_status.as_api_str(),
+        "start_date_time": params.start_date_time,
+        "end_date_time": params.end_date_time
     });
 
     let mut plan = ChangePlan::new(
@@ -223,6 +239,10 @@ pub struct UpdateCampaignParams<'a> {
     pub budget_resource_name: Option<&'a str>,
     pub geo_target_ids: Vec<String>,
     pub language_ids: Vec<String>,
+    /// New start of delivery, `yyyy-MM-dd HH:mm:ss` in the account time zone.
+    pub start_date_time: Option<&'a str>,
+    /// New end of delivery, `yyyy-MM-dd HH:mm:ss` in the account time zone.
+    pub end_date_time: Option<&'a str>,
 }
 
 /// Update an existing campaign's settings.
@@ -264,16 +284,19 @@ pub fn update_campaign(params: &UpdateCampaignParams) -> Result<serde_json::Valu
         }));
     }
 
+    validate_campaign_date_times(params.start_date_time, params.end_date_time)?;
+
+    // Campaign fields (bidding strategy, dates), sent as one update with one mask.
+    let campaign_resource = format!("customers/{}/campaigns/{}", cid, params.campaign_id);
+    let mut campaign_update = json!({
+        "resourceName": campaign_resource
+    });
+    let mut update_mask_fields: Vec<String> = Vec::new();
+
     // Bidding strategy update
     if let Some(strategy) = params.bidding_strategy {
         changes.insert("bidding_strategy".to_string(), json!(strategy));
 
-        let campaign_resource = format!("customers/{}/campaigns/{}", cid, params.campaign_id);
-        let mut campaign_update = json!({
-            "resourceName": campaign_resource
-        });
-
-        let mut update_mask_fields = Vec::new();
         apply_bidding_strategy_update(
             &mut campaign_update,
             &mut update_mask_fields,
@@ -288,7 +311,21 @@ pub fn update_campaign(params: &UpdateCampaignParams) -> Result<serde_json::Valu
         if let Some(roas) = params.target_roas {
             changes.insert("target_roas".to_string(), json!(roas));
         }
+    }
 
+    // Start and end of delivery
+    if let Some(start) = params.start_date_time {
+        changes.insert("start_date_time".to_string(), json!(start));
+        campaign_update["startDateTime"] = json!(start);
+        update_mask_fields.push("startDateTime".to_string());
+    }
+    if let Some(end) = params.end_date_time {
+        changes.insert("end_date_time".to_string(), json!(end));
+        campaign_update["endDateTime"] = json!(end);
+        update_mask_fields.push("endDateTime".to_string());
+    }
+
+    if params.bidding_strategy.is_some() || !update_mask_fields.is_empty() {
         operations.push(json!({
             "campaignOperation": {
                 "update": campaign_update,
@@ -681,6 +718,8 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
             status: None,
         });
 
@@ -707,6 +746,8 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
             status: None,
         });
 
@@ -736,6 +777,8 @@ mod tests {
             }],
             geo_target_ids: vec!["2840".to_string()],
             language_ids: vec!["1000".to_string()],
+            start_date_time: None,
+            end_date_time: None,
             status: None,
         });
 
@@ -761,6 +804,8 @@ mod tests {
             budget_resource_name: None,
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
         });
 
         assert!(result.is_err());
@@ -783,6 +828,8 @@ mod tests {
             budget_resource_name: Some("customers/1234567890/campaignBudgets/987654321"),
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
         });
 
         assert!(result.is_ok());
@@ -825,6 +872,8 @@ mod tests {
             budget_resource_name: None,
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
         });
 
         assert!(result.is_err());
@@ -848,6 +897,8 @@ mod tests {
             budget_resource_name: Some("customers/1234567890/campaignBudgets/987654321"),
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
         });
 
         assert!(result.is_err());
@@ -871,6 +922,8 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
             status: None,
         })
         .unwrap();
@@ -894,6 +947,8 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
             status: Some(AdStatus::Enabled),
         })
         .unwrap();
@@ -918,6 +973,8 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
             status: None,
         })
         .unwrap();
@@ -1207,6 +1264,8 @@ mod tests {
             ],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
             status: None,
         })
         .expect("ok");
@@ -1253,6 +1312,8 @@ mod tests {
             }],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
             status: None,
         })
         .expect_err("invalid final_url rejected");

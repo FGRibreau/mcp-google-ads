@@ -115,6 +115,10 @@ pub struct DraftCampaignToolParams {
     /// Lifecycle status for the new campaign + ad group. Defaults to `PAUSED`
     /// for safety; pass `ENABLED` to start serving immediately.
     pub status: Option<models::AdStatus>,
+    /// Start of delivery, 'yyyy-MM-dd HH:mm:ss' in the account time zone (no offset). Defaults to today.
+    pub start_date_time: Option<String>,
+    /// End of delivery, 'yyyy-MM-dd HH:mm:ss' in the account time zone (no offset). Defaults to no end.
+    pub end_date_time: Option<String>,
 }
 
 /// Parameters for updating an existing campaign.
@@ -137,6 +141,10 @@ pub struct UpdateCampaignToolParams {
     pub geo_target_ids: Option<Vec<String>>,
     /// Language IDs to add.
     pub language_ids: Option<Vec<String>>,
+    /// New start of delivery, 'yyyy-MM-dd HH:mm:ss' in the account time zone (no offset).
+    pub start_date_time: Option<String>,
+    /// New end of delivery, 'yyyy-MM-dd HH:mm:ss' in the account time zone (no offset).
+    pub end_date_time: Option<String>,
 }
 
 /// Parameters for drafting a Responsive Search Ad.
@@ -1119,6 +1127,8 @@ impl GoogleAdsMcp {
             geo_target_ids: params.geo_target_ids,
             language_ids: params.language_ids,
             status: params.status,
+            start_date_time: params.start_date_time.as_deref(),
+            end_date_time: params.end_date_time.as_deref(),
         }) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
@@ -1126,7 +1136,7 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Draft campaign updates (budget, bidding, targeting). Returns a preview — call confirm_and_apply to execute."
+        description = "Draft campaign updates (budget, bidding, start and end date-times, targeting). Returns a preview — call confirm_and_apply to execute."
     )]
     async fn update_campaign(
         &self,
@@ -1172,6 +1182,8 @@ impl GoogleAdsMcp {
                 budget_resource_name: budget_resource_name.as_deref(),
                 geo_target_ids: params.geo_target_ids.unwrap_or_default(),
                 language_ids: params.language_ids.unwrap_or_default(),
+                start_date_time: params.start_date_time.as_deref(),
+                end_date_time: params.end_date_time.as_deref(),
             },
         ) {
             Ok(preview) => preview.to_string(),

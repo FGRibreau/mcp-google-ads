@@ -46,6 +46,8 @@ async fn budget_update_targets_resolved_budget_resource_not_campaign_id() {
         budget_resource_name: Some(&resolved),
         geo_target_ids: vec![],
         language_ids: vec![],
+        start_date_time: None,
+        end_date_time: None,
     })
     .expect("update_campaign builds a plan");
 

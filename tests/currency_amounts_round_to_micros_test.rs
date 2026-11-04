@@ -46,6 +46,8 @@ async fn budget_and_target_cpa_reach_google_as_exact_micros() {
         keywords: vec![],
         geo_target_ids: vec![],
         language_ids: vec![],
+        start_date_time: None,
+        end_date_time: None,
         status: None,
     })
     .expect("plan builds");
