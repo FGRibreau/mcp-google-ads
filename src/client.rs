@@ -222,6 +222,14 @@ pub struct DismissRecommendationResponse {
     pub results: Vec<serde_json::Value>,
 }
 
+/// Response from `customers:listAccessibleCustomers`.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAccessibleCustomersResponse {
+    #[serde(default)]
+    pub resource_names: Vec<String>,
+}
+
 /// Google Ads REST API client.
 pub struct GoogleAdsClient {
     http: reqwest::Client,
@@ -263,12 +271,13 @@ impl GoogleAdsClient {
         id.replace('-', "")
     }
 
-    /// Build common headers for Google Ads API requests.
+    /// Build common headers for Google Ads API requests, without the
+    /// `login-customer-id` header.
     ///
     /// When the base URL points anywhere other than the real Google Ads host
     /// (e.g. a `wiremock` server) and no credentials file exists, this falls
     /// back to a static dummy bearer token so tests don't need an OAuth2 flow.
-    async fn build_headers(&self) -> Result<reqwest::header::HeaderMap> {
+    async fn build_base_headers(&self) -> Result<reqwest::header::HeaderMap> {
         let token = if self.is_test_base_url() && !self.config.google.credentials_path.exists() {
             "test-access-token".to_string()
         } else {
@@ -293,6 +302,18 @@ impl GoogleAdsClient {
                 McpGoogleAdsError::Config(format!("Invalid developer token: {}", e))
             })?,
         );
+
+        Ok(headers)
+    }
+
+    /// Build common headers for Google Ads API requests.
+    ///
+    /// Layers `login-customer-id` (when configured) on top of
+    /// [`Self::build_base_headers`]. Calls that are not scoped to a manager
+    /// hierarchy — e.g. `listAccessibleCustomers` — must use
+    /// [`Self::build_base_headers`] directly instead.
+    async fn build_headers(&self) -> Result<reqwest::header::HeaderMap> {
+        let mut headers = self.build_base_headers().await?;
 
         if let Some(ref login_customer_id) = self.config.ads.login_customer_id {
             let normalized = Self::normalize_customer_id(login_customer_id);
@@ -373,6 +394,32 @@ impl GoogleAdsClient {
         }
 
         Ok(all_results)
+    }
+
+    /// Call `customers:listAccessibleCustomers`.
+    ///
+    /// Unlike [`Self::search`] against `customer_client` (which only surfaces
+    /// accounts reachable by descending the configured MCC's hierarchy),
+    /// this returns every customer resource the authenticating credentials
+    /// have *direct* access to, regardless of which (if any) MCC they sit
+    /// under. It takes no customer ID and, per Google's docs, must not carry
+    /// a `login-customer-id` header — the call isn't scoped to a manager
+    /// account — so it builds its headers via [`Self::build_base_headers`]
+    /// rather than [`Self::build_headers`].
+    pub async fn list_accessible_customers(&self) -> Result<Vec<String>> {
+        let url = format!("{}/customers:listAccessibleCustomers", self.base_url);
+        let headers = self.build_base_headers().await?;
+
+        let response = self.http.get(&url).headers(headers).send().await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(parse_google_ads_error(status, &error_body));
+        }
+
+        let parsed: ListAccessibleCustomersResponse = response.json().await?;
+        Ok(parsed.resource_names)
     }
 
     /// Call the Keyword Planner generateKeywordIdeas endpoint.
@@ -459,6 +506,30 @@ impl GoogleAdsClient {
         customer_id: &str,
         operations: Vec<MutateOperation>,
     ) -> Result<MutateResponse> {
+        self.send_mutate(customer_id, operations, false).await
+    }
+
+    /// Have Google validate a mutate request without applying it (`validateOnly`).
+    ///
+    /// Google checks the whole request as it would a real one (fields, update
+    /// masks, values, resources, business and policy rules) and answers with the
+    /// same errors, but writes nothing. `Ok` means Google would accept it now.
+    pub async fn validate_mutate(
+        &self,
+        customer_id: &str,
+        operations: Vec<MutateOperation>,
+    ) -> Result<()> {
+        self.send_mutate(customer_id, operations, true)
+            .await
+            .map(|_| ())
+    }
+
+    async fn send_mutate(
+        &self,
+        customer_id: &str,
+        operations: Vec<MutateOperation>,
+        validate_only: bool,
+    ) -> Result<MutateResponse> {
         Self::validate_mutate_operations(&operations).map_err(McpGoogleAdsError::Validation)?;
 
         let normalized_id = Self::normalize_customer_id(customer_id);
@@ -468,7 +539,7 @@ impl GoogleAdsClient {
         );
         let headers = self.build_headers().await?;
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "mutateOperations": operations,
             // Atomic on purpose: with partialFailure=true Google COMMITS the
             // operations that succeed and only reports errors for the rest, so a
@@ -479,6 +550,9 @@ impl GoogleAdsClient {
             // failing operation aborts the whole request and nothing is written.
             "partialFailure": false,
         });
+        if validate_only {
+            body["validateOnly"] = serde_json::json!(true);
+        }
 
         let response = self
             .http

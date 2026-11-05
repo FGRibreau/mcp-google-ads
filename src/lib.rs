@@ -3,6 +3,7 @@ pub mod client;
 pub mod config;
 pub mod error;
 pub mod gaql;
+pub mod http_auth;
 pub mod models;
 pub mod safety;
 pub mod tools;
@@ -95,7 +96,8 @@ pub struct DraftCampaignToolParams {
     pub campaign_name: String,
     /// Daily budget in dollars (e.g. 50.0).
     pub daily_budget: f64,
-    /// Bidding strategy (e.g. MAXIMIZE_CONVERSIONS, TARGET_CPA, MANUAL_CPC).
+    /// Bidding strategy: MAXIMIZE_CONVERSIONS, MAXIMIZE_CONVERSION_VALUE, TARGET_CPA, TARGET_ROAS,
+    /// TARGET_SPEND (Maximize clicks), TARGET_IMPRESSION_SHARE or MANUAL_CPC. Each takes only its own values.
     pub bidding_strategy: String,
     /// Target CPA in dollars, if using TARGET_CPA or MAXIMIZE_CONVERSIONS.
     pub target_cpa: Option<f64>,
@@ -114,6 +116,38 @@ pub struct DraftCampaignToolParams {
     /// Lifecycle status for the new campaign + ad group. Defaults to `PAUSED`
     /// for safety; pass `ENABLED` to start serving immediately.
     pub status: Option<models::AdStatus>,
+    /// Start of delivery, 'yyyy-MM-dd HH:mm:ss' in the account time zone (no offset). Defaults to today.
+    pub start_date_time: Option<String>,
+    /// End of delivery, 'yyyy-MM-dd HH:mm:ss' in the account time zone (no offset). Defaults to no end.
+    pub end_date_time: Option<String>,
+    /// Maximum CPC bid in account currency, for TARGET_SPEND (Maximize clicks) or TARGET_IMPRESSION_SHARE.
+    pub cpc_bid_ceiling: Option<f64>,
+    /// Page location, required for TARGET_IMPRESSION_SHARE: ANYWHERE_ON_PAGE, TOP_OF_PAGE or ABSOLUTE_TOP_OF_PAGE.
+    pub target_impression_share_location: Option<models::TargetImpressionShareLocation>,
+    /// Target impression share in percent (e.g. 80.0), required for TARGET_IMPRESSION_SHARE.
+    pub target_impression_share_percent: Option<f64>,
+    /// Networks of a SEARCH campaign (Google Search, search partners, Display Network expansion).
+    /// Defaults to Google Search only.
+    pub network_settings: Option<tools::campaigns_write::NetworkSettingsInput>,
+    /// Whether to create the default ad group (ad_group_name, keywords) with the campaign.
+    /// Defaults to true; false creates the campaign alone, its ad groups then come from create_ad_group.
+    pub with_ad_group: Option<bool>,
+}
+
+/// Parameters for changing the networks of a Search campaign.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetCampaignNetworkSettingsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID whose networks to change.
+    pub campaign_id: String,
+    /// Google Search.
+    pub target_google_search: Option<bool>,
+    /// Google search partners.
+    pub target_search_network: Option<bool>,
+    /// Display Network expansion.
+    pub target_content_network: Option<bool>,
 }
 
 /// Parameters for updating an existing campaign.
@@ -136,6 +170,16 @@ pub struct UpdateCampaignToolParams {
     pub geo_target_ids: Option<Vec<String>>,
     /// Language IDs to add.
     pub language_ids: Option<Vec<String>>,
+    /// New start of delivery, 'yyyy-MM-dd HH:mm:ss' in the account time zone (no offset).
+    pub start_date_time: Option<String>,
+    /// New end of delivery, 'yyyy-MM-dd HH:mm:ss' in the account time zone (no offset).
+    pub end_date_time: Option<String>,
+    /// Maximum CPC bid in account currency, for TARGET_SPEND (Maximize clicks) or TARGET_IMPRESSION_SHARE.
+    pub cpc_bid_ceiling: Option<f64>,
+    /// Page location, required for TARGET_IMPRESSION_SHARE: ANYWHERE_ON_PAGE, TOP_OF_PAGE or ABSOLUTE_TOP_OF_PAGE.
+    pub target_impression_share_location: Option<models::TargetImpressionShareLocation>,
+    /// Target impression share in percent (e.g. 80.0), required for TARGET_IMPRESSION_SHARE.
+    pub target_impression_share_percent: Option<f64>,
 }
 
 /// Parameters for drafting a Responsive Search Ad.
@@ -370,6 +414,75 @@ pub struct SetCampaignGeoTargetTypeToolParams {
     pub negative_geo_target_type: Option<models::GeoTargetType>,
 }
 
+/// Parameters for adding negative keywords to an ad group.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddAdGroupNegativeKeywordsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The ad group ID to add negative keywords to.
+    pub ad_group_id: String,
+    /// The negative keywords, each with its own match type.
+    pub keywords: Vec<tools::keywords_write::NegativeKeywordInput>,
+}
+
+/// Parameters for adding audiences to an ad group.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddAdGroupAudiencesToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The ad group ID to add audiences to.
+    pub ad_group_id: String,
+    /// The audiences to add, each targeted or excluded (negative).
+    pub audiences: Option<Vec<tools::audiences::AdGroupAudienceInput>>,
+    /// How the ad group's targeted audiences apply: TARGETING restricts delivery to them,
+    /// OBSERVATION only observes them. Omit to keep the current setting.
+    pub targeting_mode: Option<String>,
+}
+
+/// Parameters for setting bid adjustments on a campaign's criteria.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetCampaignBidModifiersToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID whose criteria to adjust.
+    pub campaign_id: String,
+    /// The adjustments: each one a device, or an existing location or ad schedule criterion ID, with its bid modifier.
+    pub bid_modifiers: Vec<tools::campaign_criteria_write::BidModifierInput>,
+}
+
+/// Parameters for removing a targeted language from a campaign.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveLanguageTargetToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID to remove the language target from.
+    pub campaign_id: String,
+    /// The language constant ID ("1002") or resource name ("languageConstants/1002").
+    pub language_id: String,
+}
+
+/// Parameters for setting what a campaign optimises on.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetCampaignConversionGoalsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID whose conversion goals to set.
+    pub campaign_id: String,
+    /// CUSTOMER: the campaign follows the account default goals. CAMPAIGN: it carries
+    /// its own goals (campaign_conversion_goals) or a custom goal (custom_conversion_goal_id).
+    pub goal_config_level: models::GoalConfigLevel,
+    /// At CAMPAIGN level without a custom goal: the (category, origin) goals whose biddable
+    /// flag to set, at least one biddable. Goals left out keep their state.
+    pub campaign_conversion_goals: Option<Vec<models::CampaignConversionGoalInput>>,
+    /// At CAMPAIGN level: the ID of an existing custom conversion goal to optimise on.
+    pub custom_conversion_goal_id: Option<String>,
+}
+
 /// Parameters for drafting sitelink extensions.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -458,7 +571,8 @@ pub struct EntityActionParams {
 pub struct ConfirmApplyParams {
     /// The plan ID returned from a draft/preview operation.
     pub plan_id: String,
-    /// If true (default), returns a preview without executing. Set to false to apply changes.
+    /// If true (default), Google validates the plan (validateOnly) and nothing is applied;
+    /// a rejection returns Google's errors. Set to false to apply changes.
     pub dry_run: Option<bool>,
     /// One-shot opt out of the `require_dry_run` safety guard for THIS apply.
     /// Defaults to `false`. Does NOT mutate the global config. Use this only
@@ -488,7 +602,9 @@ pub struct CreateAdGroupToolParams {
     pub campaign_id: String,
     /// Name for the new ad group.
     pub ad_group_name: String,
-    /// Optional CPC bid in micros (1 dollar = 1_000_000 micros).
+    /// Optional CPC bid in units of the account currency (e.g. 1.5). Preferred over cpc_bid_micros.
+    pub cpc_bid: Option<f64>,
+    /// Optional CPC bid in micros (1 currency unit = 1_000_000 micros). Use cpc_bid instead.
     pub cpc_bid_micros: Option<i64>,
     /// Lifecycle status. Defaults to `PAUSED` for safety (was `ENABLED` in
     /// v0.2.x — corrected for consistency with the other write tools).
@@ -505,7 +621,9 @@ pub struct UpdateAdGroupToolParams {
     pub ad_group_id: String,
     /// New name for the ad group.
     pub name: Option<String>,
-    /// New CPC bid in micros.
+    /// New CPC bid in units of the account currency (e.g. 1.5). Preferred over cpc_bid_micros.
+    pub cpc_bid: Option<f64>,
+    /// New CPC bid in micros. Use cpc_bid instead.
     pub cpc_bid_micros: Option<i64>,
     /// Ad rotation mode: OPTIMIZE (serve best-performing ad) or
     /// ROTATE_FOREVER ("Rotate indefinitely" in the Google Ads UI).
@@ -825,6 +943,16 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
+        description = "List every Google Ads customer account directly accessible by the configured credentials, via the listAccessibleCustomers endpoint. Unlike list_accounts (which only descends the customer_client hierarchy under the configured MCC), this is not scoped to any manager account and surfaces every account the service account/credentials can reach directly, including ones outside that MCC's hierarchy."
+    )]
+    async fn list_accessible_customers(&self) -> String {
+        self.run_tool(
+            |client| async move { tools::accounts::list_accessible_customers(&client).await },
+        )
+        .await
+    }
+
+    #[tool(
         description = "Get detailed information about a Google Ads account (currency, timezone, status)."
     )]
     async fn get_account_info(&self, Parameters(params): Parameters<CustomerIdParams>) -> String {
@@ -1020,12 +1148,17 @@ impl GoogleAdsMcp {
         }
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         let config = self.config.clone();
+        let cpc_bid_micros =
+            match models::resolve_micros(params.cpc_bid, params.cpc_bid_micros, "cpc_bid") {
+                Ok(micros) => micros,
+                Err(e) => return e.to_json().to_string(),
+            };
         match tools::ad_groups_write::create_ad_group(
             &config,
             &cid,
             &params.campaign_id,
             &params.ad_group_name,
-            params.cpc_bid_micros,
+            cpc_bid_micros,
             params.status,
         ) {
             Ok(preview) => preview.to_string(),
@@ -1045,12 +1178,17 @@ impl GoogleAdsMcp {
         }
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         let config = self.config.clone();
+        let cpc_bid_micros =
+            match models::resolve_micros(params.cpc_bid, params.cpc_bid_micros, "cpc_bid") {
+                Ok(micros) => micros,
+                Err(e) => return e.to_json().to_string(),
+            };
         match tools::ad_groups_write::update_ad_group(
             &config,
             &cid,
             &params.ad_group_id,
             params.name.as_deref(),
-            params.cpc_bid_micros,
+            cpc_bid_micros,
             params.ad_rotation_mode,
         ) {
             Ok(preview) => preview.to_string(),
@@ -1061,7 +1199,7 @@ impl GoogleAdsMcp {
     // ── Write tools ──────────────────────────────────────────────────────
 
     #[tool(
-        description = "Draft a new campaign (PAUSED) with budget, ad group, and optional keywords. Returns a preview — call confirm_and_apply to execute."
+        description = "Draft a new campaign (PAUSED) with budget, networks, ad group (with_ad_group=false creates the campaign alone), and optional keywords. Returns a preview — call confirm_and_apply to execute."
     )]
     async fn draft_campaign(
         &self,
@@ -1094,6 +1232,13 @@ impl GoogleAdsMcp {
             geo_target_ids: params.geo_target_ids,
             language_ids: params.language_ids,
             status: params.status,
+            start_date_time: params.start_date_time.as_deref(),
+            end_date_time: params.end_date_time.as_deref(),
+            cpc_bid_ceiling: params.cpc_bid_ceiling,
+            target_impression_share_location: params.target_impression_share_location,
+            target_impression_share_percent: params.target_impression_share_percent,
+            network_settings: params.network_settings,
+            with_ad_group: params.with_ad_group.unwrap_or(true),
         }) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
@@ -1101,7 +1246,7 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Draft campaign updates (budget, bidding, targeting). Returns a preview — call confirm_and_apply to execute."
+        description = "Draft campaign updates (budget, bidding, start and end date-times, targeting). Returns a preview — call confirm_and_apply to execute."
     )]
     async fn update_campaign(
         &self,
@@ -1147,6 +1292,11 @@ impl GoogleAdsMcp {
                 budget_resource_name: budget_resource_name.as_deref(),
                 geo_target_ids: params.geo_target_ids.unwrap_or_default(),
                 language_ids: params.language_ids.unwrap_or_default(),
+                start_date_time: params.start_date_time.as_deref(),
+                end_date_time: params.end_date_time.as_deref(),
+                cpc_bid_ceiling: params.cpc_bid_ceiling,
+                target_impression_share_location: params.target_impression_share_location,
+                target_impression_share_percent: params.target_impression_share_percent,
             },
         ) {
             Ok(preview) => preview.to_string(),
@@ -1465,6 +1615,32 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
+        description = "Change the networks of a Search campaign: target_google_search (Google Search), target_search_network (search partners), target_content_network (Display Network expansion). Networks left out keep their state; at least one must be given. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_network_settings(
+        &self,
+        Parameters(params): Parameters<SetCampaignNetworkSettingsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::campaigns_write::set_campaign_network_settings(
+            &config,
+            &cid,
+            &params.campaign_id,
+            params.target_google_search,
+            params.target_search_network,
+            params.target_content_network,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
         description = "Set a campaign's geo target type. positive_geo_target_type=PRESENCE restricts serving to people physically in (or regularly in) the targeted locations; PRESENCE_OR_INTEREST (the API default) also serves people who show interest in them. Optionally also set negative_geo_target_type. At least one must be provided. Returns a preview — call confirm_and_apply to execute."
     )]
     async fn set_campaign_geo_target_type(
@@ -1483,6 +1659,151 @@ impl GoogleAdsMcp {
             &params.campaign_id,
             params.positive_geo_target_type,
             params.negative_geo_target_type,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Set what a campaign optimises on. goal_config_level=CUSTOMER follows the account default conversion goals. goal_config_level=CAMPAIGN with campaign_conversion_goals sets which (category, origin) goals of the campaign are biddable (goals left out keep their state; at least one biddable). goal_config_level=CAMPAIGN with custom_conversion_goal_id optimises on an existing custom conversion goal instead. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_conversion_goals(
+        &self,
+        Parameters(params): Parameters<SetCampaignConversionGoalsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::conversion_goals_write::set_campaign_conversion_goals(
+            &config,
+            &cid,
+            &params.campaign_id,
+            params.goal_config_level,
+            &params.campaign_conversion_goals.unwrap_or_default(),
+            params.custom_conversion_goal_id.as_deref(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Set bid adjustments on a campaign's criteria. Each entry names a device (DESKTOP, MOBILE, TABLET) or the criterion_id of a location or ad schedule the campaign already targets (a location's criterion ID is its geo target constant ID; read ad schedule IDs with run_gaql on campaign_criterion), with a bid_modifier between 0.1 and 10.0 (1.2 = +20 %); 0 excludes a device. Smart Bidding strategies ignore every adjustment but a device exclusion. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_bid_modifiers(
+        &self,
+        Parameters(params): Parameters<SetCampaignBidModifiersToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::campaign_criteria_write::set_campaign_bid_modifiers(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.bid_modifiers,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Remove a targeted language from a campaign. Destructive — requires confirmed_twice. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn remove_language_target(
+        &self,
+        Parameters(params): Parameters<RemoveLanguageTargetToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::campaign_criteria_write::remove_language_target(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.language_id,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Add negative keywords to an ad group, each with its own match type (EXACT, PHRASE, BROAD). Campaign-level negatives go through add_negative_keywords; remove an ad group negative with remove_keywords and its criterion ID. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_ad_group_negative_keywords(
+        &self,
+        Parameters(params): Parameters<AddAdGroupNegativeKeywordsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::keywords_write::add_ad_group_negative_keywords(
+            &config,
+            &cid,
+            &params.ad_group_id,
+            &params.keywords,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Add audiences to an ad group, each targeted or excluded (negative): USER_LIST (remarketing, customer list), USER_INTEREST (affinity or in-market segment), CUSTOM_AUDIENCE or COMBINED_AUDIENCE, by numeric ID. targeting_mode sets how the ad group's targeted audiences apply: TARGETING restricts delivery to them, OBSERVATION only observes them. Remove an audience with remove_keywords and its criterion ID. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_ad_group_audiences(
+        &self,
+        Parameters(params): Parameters<AddAdGroupAudiencesToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        // Google replaces the whole restriction list: read it first so that only
+        // the AUDIENCE entry changes.
+        let existing_restrictions = if params.targeting_mode.is_some() {
+            let client = match GoogleAdsClient::new(&config) {
+                Ok(c) => c,
+                Err(e) => return e.to_json().to_string(),
+            };
+            match tools::audiences::resolve_ad_group_target_restrictions(
+                &client,
+                &cid,
+                &params.ad_group_id,
+            )
+            .await
+            {
+                Ok(restrictions) => restrictions,
+                Err(e) => return e.to_json().to_string(),
+            }
+        } else {
+            Vec::new()
+        };
+
+        match tools::audiences::add_ad_group_audiences(
+            &config,
+            &cid,
+            &params.ad_group_id,
+            &params.audiences.unwrap_or_default(),
+            params.targeting_mode.as_deref(),
+            &existing_restrictions,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
@@ -1651,7 +1972,7 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Draft REMOVING keywords from an ad group by criterion IDs (IRREVERSIBLE)."
+        description = "Draft REMOVING ad group criteria by criterion IDs (IRREVERSIBLE): keywords, negative keywords and audiences of the ad group alike."
     )]
     async fn remove_keywords(
         &self,
@@ -2200,7 +2521,7 @@ impl GoogleAdsMcp {
     // ── Confirm & Apply ─────────────────────────────────────────────────
 
     #[tool(
-        description = "Execute a previously previewed change. IMPORTANT: defaults to dry_run=true. Set dry_run=false to make real changes. If config.safety.require_dry_run is true, dry_run=false will be rejected unless bypass_require_dry_run=true is also set. If the mutate is rejected by Google ad policy, the error lists the offending text and policy; when those violations are exemptible (common for medical/health keywords), retry the same plan_id with exempt_policy_violations=true."
+        description = "Execute a previously previewed change. IMPORTANT: defaults to dry_run=true, which has Google validate the plan (validateOnly) without applying anything and returns Google's errors if it would reject it. Set dry_run=false to make real changes. If config.safety.require_dry_run is true, dry_run=false will be rejected unless bypass_require_dry_run=true is also set. If the mutate is rejected by Google ad policy, the error lists the offending text and policy; when those violations are exemptible (common for medical/health keywords), retry the same plan_id with exempt_policy_violations=true."
     )]
     async fn confirm_and_apply(
         &self,

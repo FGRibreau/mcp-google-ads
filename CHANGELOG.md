@@ -5,6 +5,24 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] - 2026-10-23
+
+### Fixed
+
+- `run_gaql` with `campaign.start_date`/`campaign.end_date` now works instead of
+  failing with a raw `UNRECOGNIZED_FIELD`. Google Ads API v23 removed both
+  fields in favor of `campaign.start_date_time`/`campaign.end_date_time` (a
+  full datetime, not a bare date), and nothing told an agent reaching for the
+  old, long-documented field name what had changed — confirmed live against
+  v25 (prod). `run_gaql` exists so an agent can write arbitrary GAQL without
+  the server building it, so the query is now rewritten transparently rather
+  than only hinted at: the deprecated field is swapped for its `_time`
+  replacement before the request is sent, and the result is aliased back under
+  the field name the caller wrote, truncated to its date portion. A campaign
+  with no end date is left exactly as before (field absent, not an empty
+  string). Scoped to these two exact fields only, matched against the query's
+  parsed SELECT list — `campaign.start_date_time` itself is never touched.
+
 ## [0.13.0] - 2026-08-24
 
 ### Added

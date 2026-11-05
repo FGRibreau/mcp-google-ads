@@ -1,5 +1,5 @@
-use mcp_google_ads::config::Config;
-use mcp_google_ads::error::Result;
+use mcp_google_ads::config::{Config, Transport};
+use mcp_google_ads::error::{McpGoogleAdsError, Result};
 
 use rmcp::ServiceExt;
 
@@ -16,20 +16,88 @@ async fn main() -> Result<()> {
     tracing::info!("Starting MCP Google Ads server");
 
     let config = Config::load()?;
+
+    match config.transport {
+        Transport::Stdio => run_stdio(config).await,
+        Transport::Http => run_http(config).await,
+    }
+}
+
+async fn run_stdio(config: Config) -> Result<()> {
     let server = mcp_google_ads::GoogleAdsMcp::new(config)?;
 
     let transport = rmcp::transport::io::stdio();
 
-    let service = server.serve(transport).await.map_err(|e| {
-        mcp_google_ads::error::McpGoogleAdsError::Config(format!(
-            "Failed to start MCP server: {}",
-            e
-        ))
-    })?;
+    let service = server
+        .serve(transport)
+        .await
+        .map_err(|e| McpGoogleAdsError::Config(format!("Failed to start MCP server: {}", e)))?;
 
-    service.waiting().await.map_err(|e| {
-        mcp_google_ads::error::McpGoogleAdsError::Config(format!("Server error: {}", e))
-    })?;
+    service
+        .waiting()
+        .await
+        .map_err(|e| McpGoogleAdsError::Config(format!("Server error: {}", e)))?;
+
+    Ok(())
+}
+
+/// Serves the MCP protocol over streamable HTTP (per the MCP spec) instead of
+/// stdio, so multiple network clients can connect to one long-running process
+/// instead of each launching their own subprocess.
+async fn run_http(config: Config) -> Result<()> {
+    use rmcp::transport::streamable_http_server::{
+        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+    };
+
+    let bind_addr = format!("0.0.0.0:{}", config.http_port);
+    let api_key = config.api_key.clone();
+
+    if api_key.is_none() {
+        tracing::warn!(
+            "GOOGLE_ADS_MCP_API_KEY is unset — the HTTP transport is unauthenticated; \
+             anyone who can reach this port (subject to GOOGLE_ADS_MCP_ALLOWED_HOSTS) can call every tool"
+        );
+    }
+
+    let http_config = match &config.allowed_hosts {
+        None => StreamableHttpServerConfig::default(),
+        Some(hosts) if hosts.is_empty() => {
+            tracing::warn!(
+                "GOOGLE_ADS_MCP_ALLOWED_HOSTS=* — accepting any Host header (DNS-rebinding protection disabled)"
+            );
+            StreamableHttpServerConfig::default().disable_allowed_hosts()
+        }
+        Some(hosts) => StreamableHttpServerConfig::default().with_allowed_hosts(hosts.clone()),
+    };
+
+    let service = StreamableHttpService::new(
+        move || {
+            mcp_google_ads::GoogleAdsMcp::new(config.clone())
+                .map_err(|e| std::io::Error::other(e.to_string()))
+        },
+        LocalSessionManager::default().into(),
+        http_config,
+    );
+
+    let router =
+        axum::Router::new()
+            .nest_service("/mcp", service)
+            .layer(axum::middleware::from_fn(move |req, next| {
+                mcp_google_ads::http_auth::check_api_key(api_key.clone(), req, next)
+            }));
+
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
+        .await
+        .map_err(|e| McpGoogleAdsError::Config(format!("Failed to bind {}: {}", bind_addr, e)))?;
+
+    tracing::info!(
+        "MCP Google Ads server listening on http://{}/mcp (streamable HTTP)",
+        bind_addr
+    );
+
+    axum::serve(listener, router)
+        .await
+        .map_err(|e| McpGoogleAdsError::Config(format!("HTTP server error: {}", e)))?;
 
     Ok(())
 }

@@ -2,16 +2,11 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::error::{McpGoogleAdsError, Result};
-use crate::models::{AdStatus, NextActionHint};
+use crate::models::{to_micros, AdStatus, NextActionHint};
 use crate::safety::guards::{
     check_blocked_operation, check_budget_cap, validate_description, validate_headline,
 };
 use crate::safety::preview::{store_plan, ChangePlan};
-
-/// Convert a dollar amount to micros (Google Ads uses micros: $1 = 1_000_000).
-fn dollars_to_micros(dollars: f64) -> i64 {
-    (dollars * 1_000_000.0) as i64
-}
 
 /// Parameters for creating a Performance Max campaign.
 pub struct CreatePmaxCampaignParams<'a> {
@@ -110,7 +105,7 @@ pub fn create_pmax_campaign(params: &CreatePmaxCampaignParams) -> Result<serde_j
         "campaignBudgetOperation": {
             "create": {
                 "name": format!("{} Budget", params.campaign_name),
-                "amountMicros": dollars_to_micros(params.daily_budget).to_string(),
+                "amountMicros": to_micros(params.daily_budget).to_string(),
                 "deliveryMethod": "STANDARD",
                 // Must be explicit: budgets default to shared, and Google rejects
                 // a shared budget on a Performance Max campaign with

@@ -38,7 +38,11 @@ pub struct ConfirmApplyInput {
 /// - [`PlanDispatch::ApplyRecommendation`] -> `POST /recommendations:apply`
 /// - [`PlanDispatch::DismissRecommendation`] -> `POST /recommendations:dismiss`
 ///
-/// Hard guards (return `Err` BEFORE any HTTP traffic):
+/// `dry_run` sends the plan to `googleAds:mutate` with `validateOnly: true`:
+/// Google validates it and applies nothing (recommendation plans, whose RPCs have
+/// no validate-only mode, are only previewed). The plan is kept either way.
+///
+/// Hard guards on a real apply (return `Err` BEFORE any HTTP traffic):
 /// - `config.safety.require_dry_run && !dry_run && !bypass_require_dry_run`
 ///   -> [`McpGoogleAdsError::DryRunRequired`]
 /// - `plan.requires_double_confirm && !confirmed_twice && !dry_run`
@@ -67,14 +71,36 @@ pub async fn confirm_and_apply(
         ))
     })?;
 
-    // Dry run: return preview without executing.
+    // Dry run: Google validates the plan (`validateOnly`) and nothing is applied.
+    // A rejection is returned as the error Google would give on apply; the plan
+    // is kept either way, so the caller can fix it with a new draft or apply it.
     if dry_run {
+        let validation = match plan.dispatch {
+            PlanDispatch::MutateOperations => {
+                let client = GoogleAdsClient::new(config)?;
+                client
+                    .validate_mutate(
+                        &plan.customer_id,
+                        to_mutate_operations(&plan.mutate_operations),
+                    )
+                    .await?;
+                "VALIDATED_BY_GOOGLE"
+            }
+            // The recommendation RPCs have no validate-only mode.
+            PlanDispatch::ApplyRecommendation { .. }
+            | PlanDispatch::DismissRecommendation { .. } => "NOT_VALIDATED",
+        };
         let mut preview = plan.to_preview();
         if let Some(o) = preview.as_object_mut() {
             o.insert("dry_run".to_string(), json!(true));
+            o.insert("validation".to_string(), json!(validation));
             o.insert(
                 "message".to_string(),
-                json!("Dry run — no changes applied. Call again with dry_run=false to execute."),
+                json!(if validation == "VALIDATED_BY_GOOGLE" {
+                    "Dry run — Google validated the plan and nothing was applied. Call again with dry_run=false to execute."
+                } else {
+                    "Dry run — no changes applied; this plan cannot be validated by Google beforehand. Call again with dry_run=false to execute."
+                }),
             );
             o.insert(
                 "mutate_operations_count".to_string(),
@@ -393,17 +419,21 @@ mod tests {
         remove_plan(&plan_id);
     }
 
+    /// A recommendation plan has no validate-only mode: its dry run is a preview, without HTTP.
     #[tokio::test]
-    async fn test_dry_run_returns_preview_without_http() {
+    async fn test_recommendation_dry_run_returns_preview_without_http() {
         let plan = ChangePlan::new(
-            "test_op".to_string(),
-            "campaign".to_string(),
+            "apply_recommendation".to_string(),
+            "recommendation".to_string(),
             "1".to_string(),
             "1234567890".to_string(),
             serde_json::json!({}),
             false,
-            vec![serde_json::json!({"campaignOperation": {"update": {"resourceName": "x"}}})],
-        );
+            vec![],
+        )
+        .with_dispatch(PlanDispatch::DismissRecommendation {
+            resource_names: vec!["customers/1234567890/recommendations/1".to_string()],
+        });
         let plan_id = plan.plan_id.clone();
         store_plan(plan);
 
@@ -413,14 +443,13 @@ mod tests {
             ConfirmApplyInput {
                 plan_id: plan_id.clone(),
                 dry_run: true,
-                bypass_require_dry_run: false,
-                confirmed_twice: false,
                 ..Default::default()
             },
         )
         .await
         .unwrap();
         assert_eq!(preview["dry_run"], true);
+        assert_eq!(preview["validation"], "NOT_VALIDATED");
         // Plan is preserved across dry runs.
         assert!(get_plan(&plan_id).is_some());
         remove_plan(&plan_id);

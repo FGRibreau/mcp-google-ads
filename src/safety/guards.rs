@@ -171,6 +171,36 @@ pub fn validate_display_path(field: &str, path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Format of `Campaign.start_date_time` / `end_date_time`, read in the account time zone.
+pub const CAMPAIGN_DATE_TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S";
+
+/// Validate a campaign's start and end date-times (`yyyy-MM-dd HH:mm:ss`, account time zone).
+///
+/// Google Ads v23+ replaced `start_date`/`end_date` with these date-times. Each
+/// value given must parse in that exact format (no offset: Google reads it in the
+/// account time zone), and when both are given the end must come after the start.
+/// Whether a start may still change (not once the campaign has started) is left to
+/// Google, which knows the campaign's state.
+pub fn validate_campaign_date_times(start: Option<&str>, end: Option<&str>) -> Result<()> {
+    let parse = |field: &str, value: &str| {
+        chrono::NaiveDateTime::parse_from_str(value, CAMPAIGN_DATE_TIME_FORMAT).map_err(|_| {
+            McpGoogleAdsError::Validation(format!(
+                "{field} must be 'yyyy-MM-dd HH:mm:ss' in the account time zone, got '{value}'"
+            ))
+        })
+    };
+    let start = start.map(|v| parse("start_date_time", v)).transpose()?;
+    let end = end.map(|v| parse("end_date_time", v)).transpose()?;
+    if let (Some(start), Some(end)) = (start, end) {
+        if end <= start {
+            return Err(McpGoogleAdsError::Validation(
+                "end_date_time must be after start_date_time".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

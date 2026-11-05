@@ -24,6 +24,30 @@ pub async fn list_accounts(client: &GoogleAdsClient, customer_id: &str) -> Resul
     serde_json::to_string_pretty(&result).map_err(Into::into)
 }
 
+/// List every Google Ads customer account directly accessible by the
+/// configured credentials, via `customers:listAccessibleCustomers`.
+///
+/// Unlike [`list_accounts`] (which descends the `customer_client` hierarchy
+/// under a single configured MCC), this is not scoped to any manager account
+/// — it returns every account the credentials can reach directly, including
+/// ones outside the configured MCC's hierarchy.
+pub async fn list_accessible_customers(client: &GoogleAdsClient) -> Result<String> {
+    let resource_names = client.list_accessible_customers().await?;
+
+    let customer_ids: Vec<String> = resource_names
+        .iter()
+        .filter_map(|rn| rn.strip_prefix("customers/").map(|s| s.to_string()))
+        .collect();
+
+    let result = serde_json::json!({
+        "resource_names": resource_names,
+        "customer_ids": customer_ids,
+        "total_count": customer_ids.len(),
+    });
+
+    serde_json::to_string_pretty(&result).map_err(Into::into)
+}
+
 /// Get detailed information about a specific Google Ads account.
 ///
 /// Returns account metadata including currency, timezone, tagging settings,

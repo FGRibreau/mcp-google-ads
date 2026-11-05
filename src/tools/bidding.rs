@@ -2,13 +2,9 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::error::{McpGoogleAdsError, Result};
+use crate::models::to_micros;
 use crate::safety::guards::{check_bid_increase, check_blocked_operation};
 use crate::safety::preview::{store_plan, ChangePlan};
-
-/// Convert a dollar amount to micros (Google Ads uses micros: $1 = 1_000_000).
-fn dollars_to_micros(dollars: f64) -> i64 {
-    (dollars * 1_000_000.0) as i64
-}
 
 const VALID_STRATEGY_TYPES: &[&str] = &["TARGET_CPA", "TARGET_ROAS", "TARGET_IMPRESSION_SHARE"];
 
@@ -62,7 +58,7 @@ pub fn create_portfolio_bidding_strategy(
             strategy.as_object_mut().map(|o| {
                 o.insert(
                     "targetCpa".to_string(),
-                    json!({"targetCpaMicros": dollars_to_micros(cpa).to_string()}),
+                    json!({"targetCpaMicros": to_micros(cpa).to_string()}),
                 )
             });
         }
@@ -146,7 +142,7 @@ pub fn update_keyword_bid(
         "adGroupCriterionOperation": {
             "update": {
                 "resourceName": resource_name,
-                "cpcBidMicros": dollars_to_micros(new_bid).to_string()
+                "cpcBidMicros": to_micros(new_bid).to_string()
             },
             "updateMask": "cpcBidMicros"
         }

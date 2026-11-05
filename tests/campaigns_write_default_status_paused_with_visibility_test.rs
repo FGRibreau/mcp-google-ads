@@ -20,6 +20,13 @@ fn p<'a>(config: &'a Config, status: Option<AdStatus>) -> DraftCampaignParams<'a
         keywords: vec![],
         geo_target_ids: vec![],
         language_ids: vec![],
+        start_date_time: None,
+        end_date_time: None,
+        cpc_bid_ceiling: None,
+        target_impression_share_location: None,
+        target_impression_share_percent: None,
+        network_settings: None,
+        with_ad_group: true,
         status,
     }
 }

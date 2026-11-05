@@ -32,6 +32,10 @@ pub fn test_config() -> Config {
             blocked_operations: Vec::new(),
         },
         read_only: false,
+        transport: mcp_google_ads::config::Transport::Stdio,
+        http_port: 8080,
+        allowed_hosts: None,
+        api_key: None,
     }
 }
 

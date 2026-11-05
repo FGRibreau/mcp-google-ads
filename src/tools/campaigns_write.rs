@@ -4,14 +4,26 @@ use serde_json::json;
 
 use crate::client::GoogleAdsClient;
 use crate::config::Config;
+use crate::error::McpGoogleAdsError;
 use crate::error::Result;
-use crate::models::{AdStatus, GeoTargetType, NextActionHint};
-use crate::safety::guards::{check_blocked_operation, check_budget_cap, validate_final_url};
+use crate::models::{
+    to_micros, AdStatus, GeoTargetType, NextActionHint, TargetImpressionShareLocation,
+};
+use crate::safety::guards::{
+    check_blocked_operation, check_budget_cap, validate_campaign_date_times, validate_final_url,
+};
 use crate::safety::preview::{store_plan, ChangePlan};
 
-/// Convert a dollar amount to micros (Google Ads uses micros: $1 = 1_000_000).
-fn dollars_to_micros(dollars: f64) -> i64 {
-    (dollars * 1_000_000.0) as i64
+/// The networks of a Search campaign (`Campaign.network_settings`).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NetworkSettingsInput {
+    /// Google Search.
+    pub target_google_search: bool,
+    /// Google search partners.
+    pub target_search_network: bool,
+    /// Display Network expansion.
+    pub target_content_network: bool,
 }
 
 /// Parameters for drafting a new campaign.
@@ -36,6 +48,33 @@ pub struct DraftCampaignParams<'a> {
     pub language_ids: Vec<String>,
     /// Lifecycle status to create the campaign in. `None` -> default `PAUSED`.
     pub status: Option<AdStatus>,
+    /// Start of delivery, `yyyy-MM-dd HH:mm:ss` in the account time zone. `None` -> Google's default (today).
+    pub start_date_time: Option<&'a str>,
+    /// End of delivery, `yyyy-MM-dd HH:mm:ss` in the account time zone. `None` -> no end.
+    pub end_date_time: Option<&'a str>,
+    /// Maximum CPC bid, for TARGET_SPEND / MAXIMIZE_CLICKS or TARGET_IMPRESSION_SHARE.
+    pub cpc_bid_ceiling: Option<f64>,
+    /// Page location, for TARGET_IMPRESSION_SHARE.
+    pub target_impression_share_location: Option<TargetImpressionShareLocation>,
+    /// Target impression share in percent, for TARGET_IMPRESSION_SHARE.
+    pub target_impression_share_percent: Option<f64>,
+    /// Networks of a SEARCH campaign. `None` -> Google Search only.
+    pub network_settings: Option<NetworkSettingsInput>,
+    /// Whether to create the default ad group (and its keywords) with the campaign.
+    /// `false` creates the campaign alone; its ad groups are created with `create_ad_group`.
+    pub with_ad_group: bool,
+}
+
+impl DraftCampaignParams<'_> {
+    fn bidding_values(&self) -> BiddingValues {
+        BiddingValues {
+            target_cpa: self.target_cpa,
+            target_roas: self.target_roas,
+            cpc_bid_ceiling: self.cpc_bid_ceiling,
+            impression_share_location: self.target_impression_share_location,
+            impression_share_percent: self.target_impression_share_percent,
+        }
+    }
 }
 
 /// Draft a new campaign with budget, ad group, and optional keywords.
@@ -47,6 +86,20 @@ pub struct DraftCampaignParams<'a> {
 pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value> {
     check_budget_cap(params.daily_budget, &params.config.safety)?;
     check_blocked_operation("draft_campaign", &params.config.safety)?;
+    validate_campaign_date_times(params.start_date_time, params.end_date_time)?;
+    if params.network_settings.is_some() && params.channel_type != "SEARCH" {
+        return Err(crate::error::McpGoogleAdsError::Validation(format!(
+            "network_settings only apply to a SEARCH campaign, not {}",
+            params.channel_type
+        )));
+    }
+    if !params.with_ad_group && !params.keywords.is_empty() {
+        return Err(crate::error::McpGoogleAdsError::Validation(
+            "keywords belong to the default ad group: pass with_ad_group=true, or add them \
+             with draft_keywords once the ad group is created"
+                .to_string(),
+        ));
+    }
 
     let cid = crate::client::GoogleAdsClient::normalize_customer_id(params.customer_id);
     let mut operations: Vec<serde_json::Value> = Vec::new();
@@ -57,7 +110,7 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         "campaignBudgetOperation": {
             "create": {
                 "name": format!("{} Budget", params.campaign_name),
-                "amountMicros": dollars_to_micros(params.daily_budget).to_string(),
+                "amountMicros": to_micros(params.daily_budget).to_string(),
                 "deliveryMethod": "STANDARD",
                 // The API defaults explicitly_shared to TRUE, and campaign-level
                 // Smart Bidding (e.g. maximizeConversions) is rejected on shared
@@ -84,7 +137,23 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         "containsEuPoliticalAdvertising": "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING"
     });
 
-    if let Some(network_settings) = network_settings_for_channel(params.channel_type) {
+    if let Some(start) = params.start_date_time {
+        campaign_create["startDateTime"] = json!(start);
+    }
+    if let Some(end) = params.end_date_time {
+        campaign_create["endDateTime"] = json!(end);
+    }
+
+    let network_settings = match params.network_settings {
+        Some(networks) => Some(json!({
+            "targetGoogleSearch": networks.target_google_search,
+            "targetSearchNetwork": networks.target_search_network,
+            "targetContentNetwork": networks.target_content_network,
+            "targetPartnerSearchNetwork": false
+        })),
+        None => network_settings_for_channel(params.channel_type),
+    };
+    if let Some(network_settings) = network_settings {
         campaign_create
             .as_object_mut()
             .map(|o| o.insert("networkSettings".to_string(), network_settings));
@@ -94,9 +163,8 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
     apply_bidding_strategy(
         &mut campaign_create,
         params.bidding_strategy,
-        params.target_cpa,
-        params.target_roas,
-    );
+        &params.bidding_values(),
+    )?;
 
     operations.push(json!({
         "campaignOperation": {
@@ -132,47 +200,49 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         }));
     }
 
-    // 5. Ad group (temp resource ID -3)
-    let ad_group_resource = format!("customers/{}/adGroups/-3", cid);
-    let ad_group_type = match params.channel_type {
-        "SEARCH" => "SEARCH_STANDARD",
-        "DISPLAY" => "DISPLAY_STANDARD",
-        _ => "SEARCH_STANDARD",
-    };
-    // Ad group inherits the campaign-level status — keeping both PAUSED
-    // (or both ENABLED) avoids a half-running campaign state.
-    operations.push(json!({
-        "adGroupOperation": {
-            "create": {
-                "name": params.ad_group_name,
-                "campaign": campaign_resource,
-                "status": campaign_status.as_api_str(),
-                "type": ad_group_type,
-                "resourceName": ad_group_resource
-            }
-        }
-    }));
-
-    // 6. Keywords (optional)
-    for kw in &params.keywords {
-        let mut criterion = json!({
-            "adGroup": ad_group_resource,
-            "keyword": {
-                "text": kw.text,
-                "matchType": kw.match_type
-            }
-        });
-        if let Some(ref url) = kw.final_url {
-            validate_final_url(url)?;
-            if let Some(obj) = criterion.as_object_mut() {
-                obj.insert("finalUrls".to_string(), json!([url]));
-            }
-        }
+    if params.with_ad_group {
+        // 5. Ad group (temp resource ID -3)
+        let ad_group_resource = format!("customers/{}/adGroups/-3", cid);
+        let ad_group_type = match params.channel_type {
+            "SEARCH" => "SEARCH_STANDARD",
+            "DISPLAY" => "DISPLAY_STANDARD",
+            _ => "SEARCH_STANDARD",
+        };
+        // Ad group inherits the campaign-level status — keeping both PAUSED
+        // (or both ENABLED) avoids a half-running campaign state.
         operations.push(json!({
-            "adGroupCriterionOperation": {
-                "create": criterion
+            "adGroupOperation": {
+                "create": {
+                    "name": params.ad_group_name,
+                    "campaign": campaign_resource,
+                    "status": campaign_status.as_api_str(),
+                    "type": ad_group_type,
+                    "resourceName": ad_group_resource
+                }
             }
         }));
+
+        // 6. Keywords (optional)
+        for kw in &params.keywords {
+            let mut criterion = json!({
+                "adGroup": ad_group_resource,
+                "keyword": {
+                    "text": kw.text,
+                    "matchType": kw.match_type
+                }
+            });
+            if let Some(ref url) = kw.final_url {
+                validate_final_url(url)?;
+                if let Some(obj) = criterion.as_object_mut() {
+                    obj.insert("finalUrls".to_string(), json!([url]));
+                }
+            }
+            operations.push(json!({
+                "adGroupCriterionOperation": {
+                    "create": criterion
+                }
+            }));
+        }
     }
 
     let changes = json!({
@@ -182,11 +252,21 @@ pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value>
         "target_cpa": params.target_cpa,
         "target_roas": params.target_roas,
         "channel_type": params.channel_type,
-        "ad_group_name": params.ad_group_name,
+        "ad_group_name": params.with_ad_group.then_some(params.ad_group_name),
         "keywords_count": params.keywords.len(),
+        "network_settings": params.network_settings.map(|n| json!({
+            "target_google_search": n.target_google_search,
+            "target_search_network": n.target_search_network,
+            "target_content_network": n.target_content_network,
+        })),
         "geo_targets": params.geo_target_ids,
         "languages": params.language_ids,
-        "status": campaign_status.as_api_str()
+        "status": campaign_status.as_api_str(),
+        "start_date_time": params.start_date_time,
+        "end_date_time": params.end_date_time,
+        "cpc_bid_ceiling": params.cpc_bid_ceiling,
+        "target_impression_share_location": params.target_impression_share_location.map(|l| l.as_api_str()),
+        "target_impression_share_percent": params.target_impression_share_percent
     });
 
     let mut plan = ChangePlan::new(
@@ -228,6 +308,28 @@ pub struct UpdateCampaignParams<'a> {
     pub budget_resource_name: Option<&'a str>,
     pub geo_target_ids: Vec<String>,
     pub language_ids: Vec<String>,
+    /// New start of delivery, `yyyy-MM-dd HH:mm:ss` in the account time zone.
+    pub start_date_time: Option<&'a str>,
+    /// New end of delivery, `yyyy-MM-dd HH:mm:ss` in the account time zone.
+    pub end_date_time: Option<&'a str>,
+    /// Maximum CPC bid, for TARGET_SPEND / MAXIMIZE_CLICKS or TARGET_IMPRESSION_SHARE.
+    pub cpc_bid_ceiling: Option<f64>,
+    /// Page location, for TARGET_IMPRESSION_SHARE.
+    pub target_impression_share_location: Option<TargetImpressionShareLocation>,
+    /// Target impression share in percent, for TARGET_IMPRESSION_SHARE.
+    pub target_impression_share_percent: Option<f64>,
+}
+
+impl UpdateCampaignParams<'_> {
+    fn bidding_values(&self) -> BiddingValues {
+        BiddingValues {
+            target_cpa: self.target_cpa,
+            target_roas: self.target_roas,
+            cpc_bid_ceiling: self.cpc_bid_ceiling,
+            impression_share_location: self.target_impression_share_location,
+            impression_share_percent: self.target_impression_share_percent,
+        }
+    }
 }
 
 /// Update an existing campaign's settings.
@@ -262,30 +364,32 @@ pub fn update_campaign(params: &UpdateCampaignParams) -> Result<serde_json::Valu
             "campaignBudgetOperation": {
                 "update": {
                     "resourceName": budget_resource,
-                    "amountMicros": dollars_to_micros(budget).to_string()
+                    "amountMicros": to_micros(budget).to_string()
                 },
                 "updateMask": "amountMicros"
             }
         }));
     }
 
+    validate_campaign_date_times(params.start_date_time, params.end_date_time)?;
+
+    // Campaign fields (bidding strategy, dates), sent as one update with one mask.
+    let campaign_resource = format!("customers/{}/campaigns/{}", cid, params.campaign_id);
+    let mut campaign_update = json!({
+        "resourceName": campaign_resource
+    });
+    let mut update_mask_fields: Vec<String> = Vec::new();
+
     // Bidding strategy update
     if let Some(strategy) = params.bidding_strategy {
         changes.insert("bidding_strategy".to_string(), json!(strategy));
 
-        let campaign_resource = format!("customers/{}/campaigns/{}", cid, params.campaign_id);
-        let mut campaign_update = json!({
-            "resourceName": campaign_resource
-        });
-
-        let mut update_mask_fields = Vec::new();
         apply_bidding_strategy_update(
             &mut campaign_update,
             &mut update_mask_fields,
             strategy,
-            params.target_cpa,
-            params.target_roas,
-        );
+            &params.bidding_values(),
+        )?;
 
         if let Some(cpa) = params.target_cpa {
             changes.insert("target_cpa".to_string(), json!(cpa));
@@ -293,7 +397,36 @@ pub fn update_campaign(params: &UpdateCampaignParams) -> Result<serde_json::Valu
         if let Some(roas) = params.target_roas {
             changes.insert("target_roas".to_string(), json!(roas));
         }
+        if let Some(ceiling) = params.cpc_bid_ceiling {
+            changes.insert("cpc_bid_ceiling".to_string(), json!(ceiling));
+        }
+        if let Some(location) = params.target_impression_share_location {
+            changes.insert(
+                "target_impression_share_location".to_string(),
+                json!(location.as_api_str()),
+            );
+        }
+        if let Some(percent) = params.target_impression_share_percent {
+            changes.insert(
+                "target_impression_share_percent".to_string(),
+                json!(percent),
+            );
+        }
+    }
 
+    // Start and end of delivery
+    if let Some(start) = params.start_date_time {
+        changes.insert("start_date_time".to_string(), json!(start));
+        campaign_update["startDateTime"] = json!(start);
+        update_mask_fields.push("startDateTime".to_string());
+    }
+    if let Some(end) = params.end_date_time {
+        changes.insert("end_date_time".to_string(), json!(end));
+        campaign_update["endDateTime"] = json!(end);
+        update_mask_fields.push("endDateTime".to_string());
+    }
+
+    if params.bidding_strategy.is_some() || !update_mask_fields.is_empty() {
         operations.push(json!({
             "campaignOperation": {
                 "update": campaign_update,
@@ -484,6 +617,83 @@ pub struct KeywordInput {
     pub final_url: Option<String>,
 }
 
+/// Draft changing the networks of a Search campaign (`Campaign.network_settings`).
+///
+/// Each network given is set and masked; a network left out keeps its state. At
+/// least one must be given.
+///
+/// Returns a [`ChangePlan`] preview to confirm via `confirm_and_apply`.
+pub fn set_campaign_network_settings(
+    config: &Config,
+    customer_id: &str,
+    campaign_id: &str,
+    target_google_search: Option<bool>,
+    target_search_network: Option<bool>,
+    target_content_network: Option<bool>,
+) -> Result<serde_json::Value> {
+    check_blocked_operation("set_campaign_network_settings", &config.safety)?;
+
+    let networks = [
+        (
+            "targetGoogleSearch",
+            "target_google_search",
+            target_google_search,
+        ),
+        (
+            "targetSearchNetwork",
+            "target_search_network",
+            target_search_network,
+        ),
+        (
+            "targetContentNetwork",
+            "target_content_network",
+            target_content_network,
+        ),
+    ];
+    let mut settings = serde_json::Map::new();
+    let mut update_mask_fields: Vec<String> = Vec::new();
+    let mut changes = serde_json::Map::new();
+    for (api_field, param, value) in networks {
+        if let Some(value) = value {
+            settings.insert(api_field.to_string(), json!(value));
+            update_mask_fields.push(format!("networkSettings.{api_field}"));
+            changes.insert(param.to_string(), json!(value));
+        }
+    }
+    if update_mask_fields.is_empty() {
+        return Err(crate::error::McpGoogleAdsError::Validation(
+            "No network specified; set target_google_search, target_search_network and/or \
+             target_content_network"
+                .to_string(),
+        ));
+    }
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let operations = vec![json!({
+        "campaignOperation": {
+            "update": {
+                "resourceName": format!("customers/{}/campaigns/{}", cid, campaign_id),
+                "networkSettings": serde_json::Value::Object(settings)
+            },
+            "updateMask": update_mask_fields.join(",")
+        }
+    })];
+
+    let plan = ChangePlan::new(
+        "set_campaign_network_settings".to_string(),
+        "campaign".to_string(),
+        campaign_id.to_string(),
+        cid,
+        serde_json::Value::Object(changes),
+        false,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
 /// Build the `networkSettings` payload appropriate for an advertising channel.
 ///
 /// The settings must match the channel: a DISPLAY campaign with
@@ -514,6 +724,183 @@ fn network_settings_for_channel(channel_type: &str) -> Option<serde_json::Value>
     }
 }
 
+/// The values a campaign bidding strategy may carry, all in account currency or natural units.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BiddingValues {
+    /// Target CPA, for TARGET_CPA (required) or MAXIMIZE_CONVERSIONS (optional).
+    pub target_cpa: Option<f64>,
+    /// Target ROAS as a ratio, for TARGET_ROAS (required) or MAXIMIZE_CONVERSION_VALUE (optional).
+    pub target_roas: Option<f64>,
+    /// Maximum CPC bid, for TARGET_SPEND / MAXIMIZE_CLICKS or TARGET_IMPRESSION_SHARE (optional).
+    pub cpc_bid_ceiling: Option<f64>,
+    /// Page location, for TARGET_IMPRESSION_SHARE (required).
+    pub impression_share_location: Option<TargetImpressionShareLocation>,
+    /// Target impression share in percent (e.g. 80.0), for TARGET_IMPRESSION_SHARE (required).
+    pub impression_share_percent: Option<f64>,
+}
+
+/// The values each strategy requires, and those it may carry.
+fn strategy_values(strategy: &str) -> Option<(&'static [&'static str], &'static [&'static str])> {
+    Some(match strategy {
+        "MAXIMIZE_CONVERSIONS" => (&[], &["target_cpa"]),
+        "MAXIMIZE_CONVERSION_VALUE" => (&[], &["target_roas"]),
+        "TARGET_CPA" => (&["target_cpa"], &[]),
+        "TARGET_ROAS" => (&["target_roas"], &[]),
+        "TARGET_SPEND" | "MAXIMIZE_CLICKS" => (&[], &["cpc_bid_ceiling"]),
+        "TARGET_IMPRESSION_SHARE" => (
+            &[
+                "target_impression_share_location",
+                "target_impression_share_percent",
+            ],
+            &["cpc_bid_ceiling"],
+        ),
+        "MANUAL_CPC" | "PERCENT_CPC" => (&[], &[]),
+        _ => return None,
+    })
+}
+
+/// Check that `values` carries exactly what `strategy` takes: its required values, and no value it ignores.
+///
+/// A value the strategy does not use used to be dropped silently; it is rejected
+/// so that a caller never believes a target was written when it was not.
+pub fn check_bidding_values(strategy: &str, values: &BiddingValues) -> Result<()> {
+    let (required, optional) = strategy_values(strategy).ok_or_else(|| {
+        McpGoogleAdsError::Validation(format!(
+            "Unknown bidding strategy '{strategy}': expected MAXIMIZE_CONVERSIONS, \
+             MAXIMIZE_CONVERSION_VALUE, TARGET_CPA, TARGET_ROAS, TARGET_SPEND (MAXIMIZE_CLICKS), \
+             TARGET_IMPRESSION_SHARE, MANUAL_CPC or PERCENT_CPC"
+        ))
+    })?;
+    let given = [
+        ("target_cpa", values.target_cpa.is_some()),
+        ("target_roas", values.target_roas.is_some()),
+        ("cpc_bid_ceiling", values.cpc_bid_ceiling.is_some()),
+        (
+            "target_impression_share_location",
+            values.impression_share_location.is_some(),
+        ),
+        (
+            "target_impression_share_percent",
+            values.impression_share_percent.is_some(),
+        ),
+    ];
+    for (name, is_set) in given {
+        if required.contains(&name) && !is_set {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "{strategy} requires {name}"
+            )));
+        }
+        if is_set && !required.contains(&name) && !optional.contains(&name) {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "{strategy} takes no {name}"
+            )));
+        }
+    }
+    if let Some(percent) = values.impression_share_percent {
+        if !(percent > 0.0 && percent <= 100.0) {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "target_impression_share_percent must be in (0, 100], got {percent}"
+            )));
+        }
+    }
+    for (name, amount) in [
+        ("target_cpa", values.target_cpa),
+        ("target_roas", values.target_roas),
+        ("cpc_bid_ceiling", values.cpc_bid_ceiling),
+    ] {
+        if matches!(amount, Some(v) if v <= 0.0) {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "{name} must be greater than 0"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// `locationFractionMicros` of a percentage: 1 % is 10,000 micros.
+fn percent_to_fraction_micros(percent: f64) -> i64 {
+    (percent * 10_000.0).round() as i64
+}
+
+/// The bidding scheme field of `strategy` and its JSON value, with every value given set.
+///
+/// A leaf that is not given is left out at creation, and sent as `0` (its API
+/// "unset" value) on update, so that masking it clears a previous value.
+fn bidding_scheme(
+    strategy: &str,
+    values: &BiddingValues,
+    for_update: bool,
+) -> (&'static str, serde_json::Value) {
+    let micros = |amount: Option<f64>| -> Option<String> {
+        match amount {
+            Some(v) => Some(to_micros(v).to_string()),
+            None if for_update => Some("0".to_string()),
+            None => None,
+        }
+    };
+    let mut scheme = serde_json::Map::new();
+    let field = match strategy {
+        "MAXIMIZE_CONVERSIONS" => {
+            if let Some(cpa) = micros(values.target_cpa) {
+                scheme.insert("targetCpaMicros".to_string(), json!(cpa));
+            }
+            "maximizeConversions"
+        }
+        "MAXIMIZE_CONVERSION_VALUE" => {
+            match values.target_roas {
+                Some(roas) => scheme.insert("targetRoas".to_string(), json!(roas)),
+                None if for_update => scheme.insert("targetRoas".to_string(), json!(0.0)),
+                None => None,
+            };
+            "maximizeConversionValue"
+        }
+        "TARGET_CPA" => {
+            if let Some(cpa) = micros(values.target_cpa) {
+                scheme.insert("targetCpaMicros".to_string(), json!(cpa));
+            }
+            "targetCpa"
+        }
+        "TARGET_ROAS" => {
+            if let Some(roas) = values.target_roas {
+                scheme.insert("targetRoas".to_string(), json!(roas));
+            }
+            "targetRoas"
+        }
+        "TARGET_SPEND" | "MAXIMIZE_CLICKS" => {
+            if let Some(ceiling) = micros(values.cpc_bid_ceiling) {
+                scheme.insert("cpcBidCeilingMicros".to_string(), json!(ceiling));
+            }
+            "targetSpend"
+        }
+        "TARGET_IMPRESSION_SHARE" => {
+            if let Some(location) = values.impression_share_location {
+                scheme.insert("location".to_string(), json!(location.as_api_str()));
+            }
+            if let Some(percent) = values.impression_share_percent {
+                scheme.insert(
+                    "locationFractionMicros".to_string(),
+                    json!(percent_to_fraction_micros(percent).to_string()),
+                );
+            }
+            if let Some(ceiling) = micros(values.cpc_bid_ceiling) {
+                scheme.insert("cpcBidCeilingMicros".to_string(), json!(ceiling));
+            }
+            "targetImpressionShare"
+        }
+        "MANUAL_CPC" => {
+            if for_update {
+                // Enhanced CPC is sunset; false is the neutral value, and masking it
+                // is what puts the campaign on Manual CPC.
+                scheme.insert("enhancedCpcEnabled".to_string(), json!(false));
+            }
+            "manualCpc"
+        }
+        // PERCENT_CPC, the only other strategy `check_bidding_values` accepts.
+        _ => "percentCpc",
+    };
+    (field, serde_json::Value::Object(scheme))
+}
+
 /// Apply a bidding strategy to a campaign create JSON value.
 ///
 /// Note: in Google Ads API v25, `bidding_strategy_type` on Campaign is
@@ -523,157 +910,41 @@ fn network_settings_for_channel(channel_type: &str) -> Option<serde_json::Value>
 fn apply_bidding_strategy(
     campaign: &mut serde_json::Value,
     strategy: &str,
-    target_cpa: Option<f64>,
-    target_roas: Option<f64>,
-) {
-    let obj = match campaign.as_object_mut() {
-        Some(o) => o,
-        None => return,
-    };
-
-    match strategy {
-        "MAXIMIZE_CONVERSIONS" => {
-            let mut mc = json!({});
-            if let Some(cpa) = target_cpa {
-                mc.as_object_mut().map(|m| {
-                    m.insert(
-                        "targetCpaMicros".to_string(),
-                        json!(dollars_to_micros(cpa).to_string()),
-                    )
-                });
-            }
-            obj.insert("maximizeConversions".to_string(), mc);
-        }
-        "MAXIMIZE_CONVERSION_VALUE" => {
-            let mut mcv = json!({});
-            if let Some(roas) = target_roas {
-                mcv.as_object_mut()
-                    .map(|m| m.insert("targetRoas".to_string(), json!(roas)));
-            }
-            obj.insert("maximizeConversionValue".to_string(), mcv);
-        }
-        "TARGET_CPA" => {
-            if let Some(cpa) = target_cpa {
-                obj.insert(
-                    "targetCpa".to_string(),
-                    json!({ "targetCpaMicros": dollars_to_micros(cpa).to_string() }),
-                );
-            }
-        }
-        "TARGET_ROAS" => {
-            if let Some(roas) = target_roas {
-                obj.insert("targetRoas".to_string(), json!({ "targetRoas": roas }));
-            }
-        }
-        "MANUAL_CPC" => {
-            obj.insert("manualCpc".to_string(), json!({}));
-        }
-        "TARGET_SPEND" | "MAXIMIZE_CLICKS" => {
-            // Maximize Clicks: empty targetSpend struct (cpcBidCeilingMicros optional).
-            obj.insert("targetSpend".to_string(), json!({}));
-        }
-        "TARGET_IMPRESSION_SHARE" => {
-            obj.insert("targetImpressionShare".to_string(), json!({}));
-        }
-        "PERCENT_CPC" => {
-            obj.insert("percentCpc".to_string(), json!({}));
-        }
-        _ => {
-            // Unknown strategy — surface the error early instead of sending an
-            // OUTPUT_ONLY field that the API rejects with a generic 400.
-            // We leave the bidding fields unset; the create call will fail
-            // server-side with a clear message.
-        }
-    }
+    values: &BiddingValues,
+) -> Result<()> {
+    check_bidding_values(strategy, values)?;
+    let (field, scheme) = bidding_scheme(strategy, values, false);
+    campaign[field] = scheme;
+    Ok(())
 }
 
 /// Apply bidding strategy fields for an update operation, tracking which fields go into updateMask.
 ///
 /// The mask must name *leaf* fields. Every bidding scheme (`manualCpc`,
 /// `maximizeConversions`, ...) is a message with subfields, and masking the
-/// message itself is rejected with `FIELD_HAS_SUBFIELDS`. So each arm masks one
-/// scalar subfield of its scheme — that is enough for the server to switch the
-/// campaign onto that scheme, and it clears the subfield when no value is given
+/// message itself is rejected with `FIELD_HAS_SUBFIELDS`. So each leaf of the
+/// scheme is masked — that is enough for the server to switch the campaign onto
+/// that scheme, and an optional leaf left out is sent as `0`, which clears it
 /// (e.g. MAXIMIZE_CONVERSIONS with no `target_cpa` means "no target CPA").
 fn apply_bidding_strategy_update(
     campaign: &mut serde_json::Value,
     update_mask_fields: &mut Vec<String>,
     strategy: &str,
-    target_cpa: Option<f64>,
-    target_roas: Option<f64>,
-) {
-    let obj = match campaign.as_object_mut() {
-        Some(o) => o,
-        None => return,
-    };
-
-    match strategy {
-        "MAXIMIZE_CONVERSIONS" => {
-            // Send the target explicitly so the masked leaf always exists.
-            // 0 means "no target CPA" — how the API expresses plain Maximize
-            // Conversions.
-            let cpa_micros = target_cpa.map(dollars_to_micros).unwrap_or(0);
-            obj.insert(
-                "maximizeConversions".to_string(),
-                json!({ "targetCpaMicros": cpa_micros.to_string() }),
-            );
-            update_mask_fields.push("maximizeConversions.targetCpaMicros".to_string());
-        }
-        "MAXIMIZE_CONVERSION_VALUE" => {
-            // 0 means "no target ROAS".
-            let roas = target_roas.unwrap_or(0.0);
-            obj.insert(
-                "maximizeConversionValue".to_string(),
-                json!({ "targetRoas": roas }),
-            );
-            update_mask_fields.push("maximizeConversionValue.targetRoas".to_string());
-        }
-        "TARGET_CPA" => {
-            if let Some(cpa) = target_cpa {
-                obj.insert(
-                    "targetCpa".to_string(),
-                    json!({ "targetCpaMicros": dollars_to_micros(cpa).to_string() }),
-                );
-                update_mask_fields.push("targetCpa.targetCpaMicros".to_string());
-            }
-        }
-        "TARGET_ROAS" => {
-            if let Some(roas) = target_roas {
-                obj.insert("targetRoas".to_string(), json!({ "targetRoas": roas }));
-                update_mask_fields.push("targetRoas.targetRoas".to_string());
-            }
-        }
-        "MANUAL_CPC" => {
-            // Enhanced CPC is sunset; false is the neutral value, and masking it
-            // is what puts the campaign on Manual CPC.
-            obj.insert(
-                "manualCpc".to_string(),
-                json!({ "enhancedCpcEnabled": false }),
-            );
-            update_mask_fields.push("manualCpc.enhancedCpcEnabled".to_string());
-        }
-        "TARGET_SPEND" | "MAXIMIZE_CLICKS" => {
-            obj.insert("targetSpend".to_string(), json!({}));
-            update_mask_fields.push("targetSpend.cpcBidCeilingMicros".to_string());
-        }
-        _ => {
-            obj.insert("biddingStrategyType".to_string(), json!(strategy));
-            update_mask_fields.push("biddingStrategyType".to_string());
-        }
+    values: &BiddingValues,
+) -> Result<()> {
+    check_bidding_values(strategy, values)?;
+    let (field, scheme) = bidding_scheme(strategy, values, true);
+    if let Some(leaves) = scheme.as_object() {
+        update_mask_fields.extend(leaves.keys().map(|leaf| format!("{field}.{leaf}")));
     }
+    campaign[field] = scheme;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::Config;
-
-    #[test]
-    fn test_dollars_to_micros() {
-        assert_eq!(dollars_to_micros(1.0), 1_000_000);
-        assert_eq!(dollars_to_micros(50.0), 50_000_000);
-        assert_eq!(dollars_to_micros(0.5), 500_000);
-    }
 
     #[test]
     fn test_draft_campaign_budget_cap_exceeded() {
@@ -693,6 +964,13 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         });
 
@@ -719,6 +997,13 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         });
 
@@ -748,6 +1033,13 @@ mod tests {
             }],
             geo_target_ids: vec!["2840".to_string()],
             language_ids: vec!["1000".to_string()],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         });
 
@@ -773,6 +1065,11 @@ mod tests {
             budget_resource_name: None,
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
         });
 
         assert!(result.is_err());
@@ -795,6 +1092,11 @@ mod tests {
             budget_resource_name: Some("customers/1234567890/campaignBudgets/987654321"),
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
         });
 
         assert!(result.is_ok());
@@ -837,6 +1139,11 @@ mod tests {
             budget_resource_name: None,
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
         });
 
         assert!(result.is_err());
@@ -860,6 +1167,11 @@ mod tests {
             budget_resource_name: Some("customers/1234567890/campaignBudgets/987654321"),
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
         });
 
         assert!(result.is_err());
@@ -883,6 +1195,13 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         })
         .unwrap();
@@ -906,6 +1225,13 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: Some(AdStatus::Enabled),
         })
         .unwrap();
@@ -930,6 +1256,13 @@ mod tests {
             keywords: vec![],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         })
         .unwrap();
@@ -1006,11 +1339,29 @@ mod tests {
             "status": "PAUSED"
         });
 
-        apply_bidding_strategy(&mut campaign, "MAXIMIZE_CONVERSIONS", Some(5.0), None);
+        apply_bidding_strategy(
+            &mut campaign,
+            "MAXIMIZE_CONVERSIONS",
+            &BiddingValues {
+                target_cpa: Some(5.0),
+                target_roas: None,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(campaign.get("maximizeConversions").is_some());
 
         let mut campaign2 = json!({"name": "test"});
-        apply_bidding_strategy(&mut campaign2, "MANUAL_CPC", None, None);
+        apply_bidding_strategy(
+            &mut campaign2,
+            "MANUAL_CPC",
+            &BiddingValues {
+                target_cpa: None,
+                target_roas: None,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(campaign2.get("manualCpc").is_some());
     }
 
@@ -1052,7 +1403,17 @@ mod tests {
         for (strategy, cpa, roas, expected_mask) in cases {
             let mut campaign = json!({"resourceName": "customers/1/campaigns/2"});
             let mut mask = Vec::new();
-            apply_bidding_strategy_update(&mut campaign, &mut mask, strategy, cpa, roas);
+            apply_bidding_strategy_update(
+                &mut campaign,
+                &mut mask,
+                strategy,
+                &BiddingValues {
+                    target_cpa: cpa,
+                    target_roas: roas,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
 
             assert_eq!(mask, vec![expected_mask.to_string()], "strategy {strategy}");
             assert!(
@@ -1067,7 +1428,17 @@ mod tests {
     fn test_manual_cpc_update_sets_masked_leaf() {
         let mut campaign = json!({"resourceName": "customers/1/campaigns/2"});
         let mut mask = Vec::new();
-        apply_bidding_strategy_update(&mut campaign, &mut mask, "MANUAL_CPC", None, None);
+        apply_bidding_strategy_update(
+            &mut campaign,
+            &mut mask,
+            "MANUAL_CPC",
+            &BiddingValues {
+                target_cpa: None,
+                target_roas: None,
+                ..Default::default()
+            },
+        )
+        .unwrap();
 
         assert_eq!(campaign["manualCpc"]["enhancedCpcEnabled"], json!(false));
         assert!(campaign.get("biddingStrategyType").is_none());
@@ -1078,7 +1449,16 @@ mod tests {
     fn test_target_roas_update_sets_masked_value() {
         let mut campaign = json!({"resourceName": "customers/1/campaigns/2"});
         let mut mask = Vec::new();
-        apply_bidding_strategy_update(&mut campaign, &mut mask, "TARGET_ROAS", None, Some(17.0));
+        apply_bidding_strategy_update(
+            &mut campaign,
+            &mut mask,
+            "TARGET_ROAS",
+            &BiddingValues {
+                target_roas: Some(17.0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
 
         assert_eq!(campaign["targetRoas"]["targetRoas"], json!(17.0));
         assert_eq!(mask, vec!["targetRoas.targetRoas".to_string()]);
@@ -1089,7 +1469,17 @@ mod tests {
     fn test_maximize_conversions_without_target_sends_zero_leaf() {
         let mut campaign = json!({"resourceName": "customers/1/campaigns/2"});
         let mut mask = Vec::new();
-        apply_bidding_strategy_update(&mut campaign, &mut mask, "MAXIMIZE_CONVERSIONS", None, None);
+        apply_bidding_strategy_update(
+            &mut campaign,
+            &mut mask,
+            "MAXIMIZE_CONVERSIONS",
+            &BiddingValues {
+                target_cpa: None,
+                target_roas: None,
+                ..Default::default()
+            },
+        )
+        .unwrap();
 
         assert_eq!(
             campaign["maximizeConversions"]["targetCpaMicros"],
@@ -1219,6 +1609,13 @@ mod tests {
             ],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         })
         .expect("ok");
@@ -1265,6 +1662,13 @@ mod tests {
             }],
             geo_target_ids: vec![],
             language_ids: vec![],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         })
         .expect_err("invalid final_url rejected");

@@ -65,6 +65,10 @@ fn test_config() -> Config {
         },
         safety: mcp_google_ads::config::SafetyConfig::default(),
         read_only: false,
+        transport: mcp_google_ads::config::Transport::default(),
+        http_port: 8080,
+        allowed_hosts: None,
+        api_key: None,
     }
 }
 
@@ -247,6 +251,13 @@ async fn test_draft_campaign_dry_run() {
             keywords: vec![],
             geo_target_ids: vec!["2250".to_string()], // France
             language_ids: vec!["1002".to_string()],   // French
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         },
     );
@@ -347,6 +358,13 @@ async fn test_budget_cap_blocks_excessive_budget() {
             keywords: vec![],
             geo_target_ids: vec!["2250".to_string()],
             language_ids: vec!["1002".to_string()],
+            start_date_time: None,
+            end_date_time: None,
+            cpc_bid_ceiling: None,
+            target_impression_share_location: None,
+            target_impression_share_percent: None,
+            network_settings: None,
+            with_ad_group: true,
             status: None,
         },
     );

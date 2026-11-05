@@ -1,7 +1,12 @@
+use std::collections::HashSet;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::config::Config;
 use crate::error::{McpGoogleAdsError, Result};
+use crate::models::AudienceKind;
 use crate::safety::guards::check_blocked_operation;
 use crate::safety::preview::{store_plan, ChangePlan};
 
@@ -75,6 +80,166 @@ pub fn add_audience_targeting(
     let preview = plan.to_preview();
     store_plan(plan);
     Ok(preview)
+}
+
+/// One audience of an ad group: the audience it references, targeted or excluded.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdGroupAudienceInput {
+    /// USER_LIST, USER_INTEREST (affinity or in-market segment), CUSTOM_AUDIENCE or COMBINED_AUDIENCE.
+    pub kind: AudienceKind,
+    /// The numeric ID of the user list, user interest, custom audience or combined audience.
+    pub id: String,
+    /// true excludes the audience from the ad group. Defaults to false.
+    #[serde(default)]
+    pub negative: bool,
+}
+
+/// Draft audiences on an ad group, and how its targeted audiences apply.
+///
+/// `targeting_mode`, when given, sets the ad group's AUDIENCE target restriction
+/// (`targeting_setting.target_restrictions`): `TARGETING` restricts delivery to
+/// the targeted audiences (`bid_only` false), `OBSERVATION` only observes them
+/// (`bid_only` true). Google replaces the whole restriction list on update, and a
+/// Search ad group also holds restrictions for other dimensions (age range,
+/// gender, parental status, income range): `existing_restrictions`, the ad
+/// group's current list (read with [`resolve_ad_group_target_restrictions`]), is
+/// sent back with only its AUDIENCE entry replaced. Each audience is created as
+/// an ad group criterion, targeted or excluded; remove one with `remove_keywords`,
+/// which removes any ad group criterion by its ID.
+///
+/// Returns a ChangePlan preview that must be confirmed via `confirm_and_apply`.
+pub fn add_ad_group_audiences(
+    config: &Config,
+    customer_id: &str,
+    ad_group_id: &str,
+    audiences: &[AdGroupAudienceInput],
+    targeting_mode: Option<&str>,
+    existing_restrictions: &[serde_json::Value],
+) -> Result<serde_json::Value> {
+    check_blocked_operation("add_ad_group_audiences", &config.safety)?;
+
+    if audiences.is_empty() && targeting_mode.is_none() {
+        return Err(McpGoogleAdsError::Validation(
+            "Pass audiences, a targeting_mode, or both".to_string(),
+        ));
+    }
+    if let Some(mode) = targeting_mode {
+        if !VALID_TARGETING_MODES.contains(&mode) {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "Invalid targeting mode '{}'. Must be one of: {}",
+                mode,
+                VALID_TARGETING_MODES.join(", ")
+            )));
+        }
+    }
+    let mut seen = HashSet::new();
+    for audience in audiences {
+        if audience.id.is_empty() || !audience.id.chars().all(|c| c.is_ascii_digit()) {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "Audience id must be numeric, got '{}'",
+                audience.id
+            )));
+        }
+        if !seen.insert((audience.kind, audience.id.clone())) {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "Audience {} {} appears twice: an audience is either targeted or excluded",
+                audience.kind.as_str(),
+                audience.id
+            )));
+        }
+    }
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let ad_group_resource = format!("customers/{}/adGroups/{}", cid, ad_group_id);
+    let mut operations: Vec<serde_json::Value> = Vec::new();
+
+    if let Some(mode) = targeting_mode {
+        let mut restrictions: Vec<serde_json::Value> = existing_restrictions
+            .iter()
+            .filter(|r| r.get("targetingDimension").and_then(|d| d.as_str()) != Some("AUDIENCE"))
+            .cloned()
+            .collect();
+        restrictions
+            .push(json!({"targetingDimension": "AUDIENCE", "bidOnly": mode == "OBSERVATION"}));
+        operations.push(json!({
+            "adGroupOperation": {
+                "update": {
+                    "resourceName": ad_group_resource,
+                    "targetingSetting": {
+                        "targetRestrictions": restrictions
+                    }
+                },
+                "updateMask": "targetingSetting.targetRestrictions"
+            }
+        }));
+    }
+    for audience in audiences {
+        let (criterion_field, info_field, collection) = audience.kind.api_fields();
+        operations.push(json!({
+            "adGroupCriterionOperation": {
+                "create": {
+                    "adGroup": ad_group_resource,
+                    "negative": audience.negative,
+                    criterion_field: {
+                        info_field: format!("customers/{}/{}/{}", cid, collection, audience.id)
+                    }
+                }
+            }
+        }));
+    }
+
+    let changes = json!({
+        "ad_group_id": ad_group_id,
+        "targeting_mode": targeting_mode,
+        "audiences": audiences.iter().map(|a| json!({
+            "kind": a.kind.as_str(),
+            "id": a.id,
+            "negative": a.negative,
+        })).collect::<Vec<_>>(),
+    });
+
+    let plan = ChangePlan::new(
+        "add_ad_group_audiences".to_string(),
+        "ad_group_criterion".to_string(),
+        ad_group_id.to_string(),
+        cid,
+        changes,
+        false,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
+/// The current target restrictions of an ad group (`ad_group.targeting_setting.target_restrictions`).
+///
+/// An ad group without any restriction yields an empty list.
+pub async fn resolve_ad_group_target_restrictions(
+    client: &crate::client::GoogleAdsClient,
+    customer_id: &str,
+    ad_group_id: &str,
+) -> Result<Vec<serde_json::Value>> {
+    if ad_group_id.is_empty() || !ad_group_id.chars().all(|c| c.is_ascii_digit()) {
+        return Err(McpGoogleAdsError::Validation(format!(
+            "ad_group_id must be numeric, got '{ad_group_id}'"
+        )));
+    }
+    let query = format!(
+        "SELECT ad_group.targeting_setting.target_restrictions FROM ad_group WHERE ad_group.id = {}",
+        ad_group_id
+    );
+    let rows = client.search(customer_id, &query).await?;
+    let row = rows.first().ok_or_else(|| {
+        McpGoogleAdsError::Validation(format!("Ad group {ad_group_id} was not found"))
+    })?;
+    Ok(row
+        .pointer("/adGroup/targetingSetting/targetRestrictions")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default())
 }
 
 /// Maximum length of a Performance Max search theme, per the Google Ads API.
