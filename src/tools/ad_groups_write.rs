@@ -2,7 +2,7 @@ use serde_json::json;
 
 use crate::config::Config;
 use crate::error::{McpGoogleAdsError, Result};
-use crate::models::{AdRotationMode, AdStatus, NextActionHint};
+use crate::models::{AdGroupType, AdRotationMode, AdStatus, NextActionHint};
 use crate::safety::guards::check_blocked_operation;
 use crate::safety::preview::{store_plan, ChangePlan};
 
@@ -14,6 +14,10 @@ use crate::safety::preview::{store_plan, ChangePlan};
 /// `next_action_hint` pointing at the `enable_entity` MCP tool so the
 /// agent can complete the workflow without any UI step.
 ///
+/// `ad_group_type` defaults to [`AdGroupType::SearchStandard`], the only type
+/// this tool could create before. It must match the campaign: a Display
+/// campaign needs `DISPLAY_STANDARD`, and Google rejects any mismatch.
+///
 /// Returns a ChangePlan preview that must be confirmed via `confirm_and_apply`.
 pub fn create_ad_group(
     config: &Config,
@@ -22,6 +26,7 @@ pub fn create_ad_group(
     ad_group_name: &str,
     cpc_bid_micros: Option<i64>,
     status: Option<AdStatus>,
+    ad_group_type: Option<AdGroupType>,
 ) -> Result<serde_json::Value> {
     check_blocked_operation("create_ad_group", &config.safety)?;
 
@@ -34,12 +39,13 @@ pub fn create_ad_group(
     let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
     let campaign_resource = format!("customers/{}/campaigns/{}", cid, campaign_id);
     let resolved_status = status.unwrap_or_default();
+    let resolved_type = ad_group_type.unwrap_or_default();
 
     let mut create = json!({
         "campaign": campaign_resource,
         "name": ad_group_name,
         "status": resolved_status.as_api_str(),
-        "type": "SEARCH_STANDARD"
+        "type": resolved_type.as_api_str()
     });
 
     if let Some(bid) = cpc_bid_micros {
@@ -57,6 +63,7 @@ pub fn create_ad_group(
         "ad_group_name": ad_group_name,
         "cpc_bid_micros": cpc_bid_micros,
         "status": resolved_status.as_api_str(),
+        "ad_group_type": resolved_type.as_api_str(),
     });
 
     let mut plan = ChangePlan::new(
@@ -81,11 +88,19 @@ pub fn create_ad_group(
     Ok(preview)
 }
 
-/// Draft updating an existing ad group (name, CPC bid, and/or ad rotation mode).
+/// Draft updating an existing ad group (name, CPC bid, ad rotation mode and/or
+/// optimized targeting).
 ///
-/// At least one of `name`, `cpc_bid_micros` or `ad_rotation_mode` must be
-/// provided. `ad_rotation_mode: ROTATE_FOREVER` is what the Google Ads UI
-/// calls "Rotate indefinitely".
+/// At least one of `name`, `cpc_bid_micros`, `ad_rotation_mode` or
+/// `optimized_targeting_enabled` must be provided. `ad_rotation_mode:
+/// ROTATE_FOREVER` is what the Google Ads UI calls "Rotate indefinitely".
+///
+/// `optimized_targeting_enabled` maps to `AdGroup.optimized_targeting_enabled`.
+/// It is on by default for Display ad groups and lets Google serve far beyond
+/// the targeted audiences — a remarketing ad group with it on mostly reaches
+/// people who never visited the site. Set it to `false` to keep the ad group
+/// on its lists.
+///
 /// Returns a ChangePlan preview that must be confirmed via `confirm_and_apply`.
 pub fn update_ad_group(
     config: &Config,
@@ -94,12 +109,19 @@ pub fn update_ad_group(
     name: Option<&str>,
     cpc_bid_micros: Option<i64>,
     ad_rotation_mode: Option<AdRotationMode>,
+    optimized_targeting_enabled: Option<bool>,
 ) -> Result<serde_json::Value> {
     check_blocked_operation("update_ad_group", &config.safety)?;
 
-    if name.is_none() && cpc_bid_micros.is_none() && ad_rotation_mode.is_none() {
+    if name.is_none()
+        && cpc_bid_micros.is_none()
+        && ad_rotation_mode.is_none()
+        && optimized_targeting_enabled.is_none()
+    {
         return Err(McpGoogleAdsError::Validation(
-            "At least one of name, cpc_bid_micros or ad_rotation_mode must be provided".to_string(),
+            "At least one of name, cpc_bid_micros, ad_rotation_mode or \
+             optimized_targeting_enabled must be provided"
+                .to_string(),
         ));
     }
 
@@ -121,6 +143,10 @@ pub fn update_ad_group(
         ad_group["adRotationMode"] = json!(rotation.as_api_str());
         update_mask_fields.push("adRotationMode");
     }
+    if let Some(enabled) = optimized_targeting_enabled {
+        ad_group["optimizedTargetingEnabled"] = json!(enabled);
+        update_mask_fields.push("optimizedTargetingEnabled");
+    }
 
     let operation = json!({
         "adGroupOperation": {
@@ -134,6 +160,7 @@ pub fn update_ad_group(
         "name": name,
         "cpc_bid_micros": cpc_bid_micros,
         "ad_rotation_mode": ad_rotation_mode.map(|r| r.as_api_str()),
+        "optimized_targeting_enabled": optimized_targeting_enabled,
     });
 
     let plan = ChangePlan::new(
@@ -166,6 +193,7 @@ mod tests {
             "My Ad Group",
             Some(2_000_000),
             None,
+            None,
         );
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
@@ -181,7 +209,8 @@ mod tests {
         // Consistency: ad_group default is PAUSED (was ENABLED in v0.2.x, the
         // only outlier among the write tools). Now matches campaigns/ads/pmax.
         let config = Config::default();
-        let preview = create_ad_group(&config, "123-456-7890", "111", "AG1", None, None).unwrap();
+        let preview =
+            create_ad_group(&config, "123-456-7890", "111", "AG1", None, None, None).unwrap();
         assert_eq!(preview["status_after_apply"], "PAUSED");
         assert_eq!(preview["next_action_hint"]["tool"], "enable_entity");
         assert_eq!(
@@ -200,6 +229,7 @@ mod tests {
             "AG1",
             None,
             Some(AdStatus::Enabled),
+            None,
         )
         .unwrap();
         assert_eq!(preview["status_after_apply"], "ENABLED");
@@ -209,7 +239,15 @@ mod tests {
     #[test]
     fn test_create_ad_group_without_bid() {
         let config = Config::default();
-        let result = create_ad_group(&config, "123-456-7890", "111", "My Ad Group", None, None);
+        let result = create_ad_group(
+            &config,
+            "123-456-7890",
+            "111",
+            "My Ad Group",
+            None,
+            None,
+            None,
+        );
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "create_ad_group");
@@ -219,7 +257,7 @@ mod tests {
     #[test]
     fn test_create_ad_group_empty_name() {
         let config = Config::default();
-        let result = create_ad_group(&config, "123-456-7890", "111", "", None, None);
+        let result = create_ad_group(&config, "123-456-7890", "111", "", None, None, None);
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("ad_group_name must not be empty"));
@@ -229,7 +267,7 @@ mod tests {
     fn test_create_ad_group_blocked() {
         let mut config = Config::default();
         config.safety.blocked_operations = vec!["create_ad_group".to_string()];
-        let result = create_ad_group(&config, "123-456-7890", "111", "Test", None, None);
+        let result = create_ad_group(&config, "123-456-7890", "111", "Test", None, None, None);
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("blocked"));
@@ -238,7 +276,15 @@ mod tests {
     #[test]
     fn test_update_ad_group_name_only() {
         let config = Config::default();
-        let result = update_ad_group(&config, "123-456-7890", "555", Some("New Name"), None, None);
+        let result = update_ad_group(
+            &config,
+            "123-456-7890",
+            "555",
+            Some("New Name"),
+            None,
+            None,
+            None,
+        );
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "update_ad_group");
@@ -249,7 +295,15 @@ mod tests {
     #[test]
     fn test_update_ad_group_bid_only() {
         let config = Config::default();
-        let result = update_ad_group(&config, "123-456-7890", "555", None, Some(3_000_000), None);
+        let result = update_ad_group(
+            &config,
+            "123-456-7890",
+            "555",
+            None,
+            Some(3_000_000),
+            None,
+            None,
+        );
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
         assert_eq!(preview["operation"], "update_ad_group");
@@ -265,6 +319,7 @@ mod tests {
             "555",
             Some("Updated"),
             Some(1_500_000),
+            None,
             None,
         );
         assert!(result.is_ok());
@@ -283,6 +338,7 @@ mod tests {
             None,
             None,
             Some(AdRotationMode::RotateForever),
+            None,
         );
         assert!(result.is_ok());
         let preview = result.ok().unwrap_or_default();
@@ -295,19 +351,115 @@ mod tests {
     #[test]
     fn test_update_ad_group_no_fields() {
         let config = Config::default();
-        let result = update_ad_group(&config, "123-456-7890", "555", None, None, None);
+        let result = update_ad_group(&config, "123-456-7890", "555", None, None, None, None);
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(err.contains("At least one of name, cpc_bid_micros or ad_rotation_mode"));
+        assert!(err.contains("ad_rotation_mode or optimized_targeting_enabled"));
     }
 
     #[test]
     fn test_update_ad_group_blocked() {
         let mut config = Config::default();
         config.safety.blocked_operations = vec!["update_ad_group".to_string()];
-        let result = update_ad_group(&config, "123-456-7890", "555", Some("Test"), None, None);
+        let result = update_ad_group(
+            &config,
+            "123-456-7890",
+            "555",
+            Some("Test"),
+            None,
+            None,
+            None,
+        );
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("blocked"));
+    }
+
+    fn first_operation(preview: &serde_json::Value) -> serde_json::Value {
+        use crate::safety::preview::{get_plan, remove_plan};
+        let plan_id = preview["plan_id"].as_str().expect("plan_id present");
+        let plan = get_plan(plan_id).expect("plan stored");
+        let op = plan.mutate_operations[0].clone();
+        remove_plan(plan_id);
+        op
+    }
+
+    #[test]
+    fn test_create_ad_group_defaults_to_search_standard() {
+        let config = Config::default();
+        let preview =
+            create_ad_group(&config, "123-456-7890", "111", "AG1", None, None, None).unwrap();
+        assert_eq!(preview["changes"]["ad_group_type"], "SEARCH_STANDARD");
+        let op = first_operation(&preview);
+        assert_eq!(op["adGroupOperation"]["create"]["type"], "SEARCH_STANDARD");
+    }
+
+    #[test]
+    fn test_create_ad_group_display_standard() {
+        let config = Config::default();
+        let preview = create_ad_group(
+            &config,
+            "123-456-7890",
+            "111",
+            "Retargeting | Layer 1",
+            None,
+            None,
+            Some(AdGroupType::DisplayStandard),
+        )
+        .unwrap();
+        assert_eq!(preview["changes"]["ad_group_type"], "DISPLAY_STANDARD");
+        let op = first_operation(&preview);
+        assert_eq!(op["adGroupOperation"]["create"]["type"], "DISPLAY_STANDARD");
+        // The type changes nothing about the paused-by-default safety.
+        assert_eq!(op["adGroupOperation"]["create"]["status"], "PAUSED");
+    }
+
+    #[test]
+    fn test_update_ad_group_optimized_targeting_off() {
+        let config = Config::default();
+        let preview = update_ad_group(
+            &config,
+            "123-456-7890",
+            "9000000105",
+            None,
+            None,
+            None,
+            Some(false),
+        )
+        .unwrap();
+        assert_eq!(preview["changes"]["optimized_targeting_enabled"], false);
+        let op = first_operation(&preview);
+        assert_eq!(
+            op["adGroupOperation"]["update"]["optimizedTargetingEnabled"],
+            false
+        );
+        assert_eq!(
+            op["adGroupOperation"]["updateMask"],
+            "optimizedTargetingEnabled"
+        );
+    }
+
+    #[test]
+    fn test_update_ad_group_optimized_targeting_combines_with_name() {
+        let config = Config::default();
+        let preview = update_ad_group(
+            &config,
+            "123-456-7890",
+            "555",
+            Some("Remarketing only"),
+            None,
+            None,
+            Some(true),
+        )
+        .unwrap();
+        let op = first_operation(&preview);
+        assert_eq!(
+            op["adGroupOperation"]["update"]["optimizedTargetingEnabled"],
+            true
+        );
+        assert_eq!(
+            op["adGroupOperation"]["updateMask"],
+            "name,optimizedTargetingEnabled"
+        );
     }
 }

@@ -10,7 +10,6 @@
 //! exclusion the clinic playbook treats as mandatory.
 
 use serde_json::json;
-use std::collections::HashSet;
 
 use crate::client::GoogleAdsClient;
 use crate::config::Config;
@@ -18,42 +17,7 @@ use crate::error::{McpGoogleAdsError, Result};
 use crate::models::demographic::{AgeRange, Gender, IncomeRange};
 use crate::safety::guards::check_blocked_operation;
 use crate::safety::preview::{store_plan, ChangePlan};
-
-/// Upper bound on criteria written in a single plan.
-///
-/// Google's own mutate ceiling is far higher; this is a guard against a caller
-/// fanning out over every ad group in a large account by accident. Exceeding it
-/// is a hard error rather than a truncation — a silently partial exclusion is
-/// worse than none, because it reads as done.
-const MAX_CRITERIA_PER_PLAN: usize = 500;
-
-/// Validate an ID is a bare positive integer, as Google Ads IDs always are.
-fn validate_numeric_id(label: &str, value: &str) -> Result<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(McpGoogleAdsError::Validation(format!(
-            "{} must not be empty",
-            label
-        )));
-    }
-    if !trimmed.chars().all(|c| c.is_ascii_digit()) {
-        return Err(McpGoogleAdsError::Validation(format!(
-            "{} must be numeric, got '{}'",
-            label, value
-        )));
-    }
-    Ok(trimmed.to_string())
-}
-
-/// Deduplicate while preserving caller order, so the preview reads predictably.
-fn dedupe_preserving_order<T: Clone + std::hash::Hash + Eq>(items: &[T]) -> Vec<T> {
-    let mut seen = HashSet::new();
-    items
-        .iter()
-        .filter(|item| seen.insert((*item).clone()))
-        .cloned()
-        .collect()
-}
+use crate::tools::ids::{dedupe_preserving_order, validate_numeric_id, MAX_CRITERIA_PER_PLAN};
 
 /// Exclude demographic tiers from one or more ad groups.
 ///

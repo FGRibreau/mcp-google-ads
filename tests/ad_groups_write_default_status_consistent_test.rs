@@ -9,7 +9,8 @@ use mcp_google_ads::tools::ad_groups_write::create_ad_group;
 #[test]
 fn default_status_paused_consistent_with_other_write_tools() {
     let config = Config::default();
-    let preview = create_ad_group(&config, "123-456-7890", "CAMP1", "AG1", None, None).unwrap();
+    let preview =
+        create_ad_group(&config, "123-456-7890", "CAMP1", "AG1", None, None, None).unwrap();
     assert_eq!(preview["status_after_apply"], "PAUSED");
     assert_eq!(preview["next_action_hint"]["tool"], "enable_entity");
 
@@ -29,6 +30,7 @@ fn explicit_enabled_emits_no_hint() {
         "AG1",
         None,
         Some(AdStatus::Enabled),
+        None,
     )
     .unwrap();
     assert_eq!(preview["status_after_apply"], "ENABLED");

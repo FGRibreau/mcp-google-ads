@@ -493,6 +493,9 @@ pub struct CreateAdGroupToolParams {
     /// Lifecycle status. Defaults to `PAUSED` for safety (was `ENABLED` in
     /// v0.2.x — corrected for consistency with the other write tools).
     pub status: Option<models::AdStatus>,
+    /// Ad group type: `SEARCH_STANDARD` (default) or `DISPLAY_STANDARD`. Must
+    /// match the campaign — a Display campaign needs `DISPLAY_STANDARD`.
+    pub ad_group_type: Option<models::AdGroupType>,
 }
 
 /// Parameters for updating an ad group.
@@ -510,6 +513,10 @@ pub struct UpdateAdGroupToolParams {
     /// Ad rotation mode: OPTIMIZE (serve best-performing ad) or
     /// ROTATE_FOREVER ("Rotate indefinitely" in the Google Ads UI).
     pub ad_rotation_mode: Option<models::AdRotationMode>,
+    /// Optimized targeting (Display). `false` keeps the ad group on its
+    /// targeted audiences; `true` (the Display default) lets Google serve
+    /// beyond them to people it predicts will convert.
+    pub optimized_targeting_enabled: Option<bool>,
 }
 
 /// Parameters for keyword discovery.
@@ -574,6 +581,68 @@ pub struct AddAudienceTargetingToolParams {
     pub audience_id: String,
     /// Targeting mode: TARGETING or OBSERVATION.
     pub targeting_mode: String,
+}
+
+/// Parameters for adding user lists to ad groups as positive criteria.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddAdGroupAudiencesToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Ad group IDs to add the lists to.
+    pub ad_group_ids: Vec<String>,
+    /// Numeric user list IDs, from
+    /// `run_gaql("SELECT user_list.id, user_list.name FROM user_list")`.
+    pub audience_ids: Vec<String>,
+}
+
+/// Parameters for excluding user lists from a campaign or ad groups.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExcludeAudiencesToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Exclude from the whole campaign (covers every ad group in it). Pass
+    /// this OR `ad_group_ids`.
+    pub campaign_id: Option<String>,
+    /// Exclude from these ad groups only. Pass this OR `campaign_id`.
+    pub ad_group_ids: Option<Vec<String>>,
+    /// Numeric user list IDs to exclude, e.g. converters and customers.
+    pub audience_ids: Vec<String>,
+}
+
+/// Parameters for setting a campaign's frequency caps.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetCampaignFrequencyCapsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID (Display or Video).
+    pub campaign_id: String,
+    /// Every cap the campaign should have — this list replaces the existing
+    /// caps. e.g. `[{"max_impressions": 3, "time_unit": "DAY"},
+    /// {"max_impressions": 10, "time_unit": "WEEK"}]`. `level` defaults to
+    /// CAMPAIGN.
+    pub frequency_caps: Vec<models::FrequencyCap>,
+}
+
+/// Parameters for excluding placements from a campaign.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExcludePlacementsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID to exclude the placements from.
+    pub campaign_id: String,
+    /// Websites to exclude, e.g. `["example.com"]`.
+    pub placement_urls: Option<Vec<String>>,
+    /// Mobile app category constant IDs to exclude. `69500` is "All Apps".
+    /// List them with `SELECT mobile_app_category_constant.id,
+    /// mobile_app_category_constant.name FROM mobile_app_category_constant`.
+    pub mobile_app_category_ids: Option<Vec<String>>,
+    /// Single mobile apps to exclude: `1-<App Store id>` (iOS) or
+    /// `2-<package name>` (Android).
+    pub mobile_app_ids: Option<Vec<String>>,
 }
 
 /// Parameters for creating a portfolio bidding strategy.
@@ -1009,7 +1078,7 @@ impl GoogleAdsMcp {
     // ── Ad Groups (write) ────────────────────────────────────────────────
 
     #[tool(
-        description = "Draft a new ad group in an existing campaign. Defaults to PAUSED — pass status='ENABLED' to start serving immediately. Returns a preview — call confirm_and_apply to execute."
+        description = "Draft a new ad group in an existing campaign. Defaults to PAUSED — pass status='ENABLED' to start serving immediately. ad_group_type defaults to SEARCH_STANDARD; pass DISPLAY_STANDARD for a Display campaign (the type must match the campaign). Returns a preview — call confirm_and_apply to execute."
     )]
     async fn create_ad_group(
         &self,
@@ -1027,6 +1096,7 @@ impl GoogleAdsMcp {
             &params.ad_group_name,
             params.cpc_bid_micros,
             params.status,
+            params.ad_group_type,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
@@ -1034,7 +1104,7 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Draft ad group updates (name, CPC bid, ad rotation mode). ad_rotation_mode=ROTATE_FOREVER is 'Rotate indefinitely' in the UI. Returns a preview — call confirm_and_apply to execute."
+        description = "Draft ad group updates (name, CPC bid, ad rotation mode, optimized targeting). ad_rotation_mode=ROTATE_FOREVER is 'Rotate indefinitely' in the UI. optimized_targeting_enabled=false keeps a Display ad group on its targeted audiences — with it on (the Display default) Google also serves to people outside the lists, so a remarketing ad group stops being remarketing. Returns a preview — call confirm_and_apply to execute."
     )]
     async fn update_ad_group(
         &self,
@@ -1052,6 +1122,7 @@ impl GoogleAdsMcp {
             params.name.as_deref(),
             params.cpc_bid_micros,
             params.ad_rotation_mode,
+            params.optimized_targeting_enabled,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
@@ -1828,6 +1899,107 @@ impl GoogleAdsMcp {
         }
     }
 
+    #[tool(
+        description = "Add user lists to one or more ad groups as positive audience criteria — one ad_group_criterion per ad group × list. The ad-group-scoped counterpart of add_audience_targeting, and what a Display remarketing ad group needs. Whether the lists restrict reach (Targeting) or only inform bids (Observation) follows the ad group's AUDIENCE target restriction. For pure remarketing also set update_ad_group optimized_targeting_enabled=false, or Google keeps serving beyond the lists. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_ad_group_audiences(
+        &self,
+        Parameters(params): Parameters<AddAdGroupAudiencesToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::audiences::add_ad_group_audiences(
+            &config,
+            &cid,
+            &params.ad_group_ids,
+            &params.audience_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Exclude user lists (e.g. converters, customers) from a whole campaign (campaign_id — covers every ad group in it) or from specific ad groups (ad_group_ids). Pass exactly one scope. Writes NEGATIVE criteria: excluded users never see the ads. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn exclude_audiences(
+        &self,
+        Parameters(params): Parameters<ExcludeAudiencesToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::audiences::exclude_audiences(
+            &config,
+            &cid,
+            params.campaign_id.as_deref(),
+            &params.ad_group_ids.unwrap_or_default(),
+            &params.audience_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    // ── Display: frequency caps and placement exclusions ────────────────
+
+    #[tool(
+        description = "Set a campaign's impression frequency caps (Display and Video campaigns). The list replaces every existing cap, e.g. [{\"max_impressions\":3,\"time_unit\":\"DAY\"},{\"max_impressions\":10,\"time_unit\":\"WEEK\"}]; level defaults to CAMPAIGN (also AD_GROUP, AD_GROUP_AD). An empty list is refused. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_frequency_caps(
+        &self,
+        Parameters(params): Parameters<SetCampaignFrequencyCapsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::campaigns_write::set_campaign_frequency_caps(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.frequency_caps,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Exclude websites (placement_urls), mobile app categories (mobile_app_category_ids — 69500 is 'All Apps') and/or single mobile apps (mobile_app_ids: '1-<App Store id>' or '2-<package name>') from a campaign. Writes NEGATIVE campaign criteria, so the exclusion covers every ad group in the campaign. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn exclude_placements(
+        &self,
+        Parameters(params): Parameters<ExcludePlacementsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::placements::exclude_placements(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.placement_urls.unwrap_or_default(),
+            &params.mobile_app_category_ids.unwrap_or_default(),
+            &params.mobile_app_ids.unwrap_or_default(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
     // ── Phase 5: Bidding ────────────────────────────────────────────────
 
     #[tool(
@@ -2431,5 +2603,32 @@ mod tests {
             "Expected at least 37 tools, got {}. Some tools may be missing from the router.",
             tools.len()
         );
+    }
+
+    /// The Display remarketing tools must be reachable over MCP, not just as
+    /// library functions.
+    #[test]
+    fn test_display_targeting_tools_are_registered() {
+        let config = Config::default();
+        let server = GoogleAdsMcp::new(config).unwrap();
+        let names: Vec<String> = server
+            .tool_router
+            .list_all()
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        for expected in [
+            "add_ad_group_audiences",
+            "exclude_audiences",
+            "set_campaign_frequency_caps",
+            "exclude_placements",
+        ] {
+            assert!(
+                names.iter().any(|n| n == expected),
+                "{} is missing from the tool router",
+                expected
+            );
+        }
     }
 }

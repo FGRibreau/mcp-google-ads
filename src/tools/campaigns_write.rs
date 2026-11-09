@@ -5,7 +5,7 @@ use serde_json::json;
 use crate::client::GoogleAdsClient;
 use crate::config::Config;
 use crate::error::Result;
-use crate::models::{AdStatus, GeoTargetType, NextActionHint};
+use crate::models::{AdStatus, FrequencyCap, GeoTargetType, NextActionHint};
 use crate::safety::guards::{check_blocked_operation, check_budget_cap, validate_final_url};
 use crate::safety::preview::{store_plan, ChangePlan};
 
@@ -463,6 +463,98 @@ pub fn set_campaign_geo_target_type(
         campaign_id.to_string(),
         cid,
         serde_json::Value::Object(changes),
+        false,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
+/// Set a campaign's impression frequency caps (`campaign.frequency_caps`).
+///
+/// The list given **replaces** every cap on the campaign: the operation masks
+/// `frequencyCaps` as a whole, which is how the API treats a repeated field.
+/// So to add a weekly cap next to an existing daily one, pass both. An empty
+/// list is refused rather than read as "remove all caps" — a cleared cap is
+/// easy to send by accident and invisible until the spend shows it.
+///
+/// Each cap counts impressions per user over a DAY, WEEK or MONTH, at the
+/// CAMPAIGN level (default), per AD_GROUP or per AD_GROUP_AD. Two caps with the
+/// same level and window contradict each other and are refused. Frequency caps
+/// apply to Display and Video campaigns; Google rejects them on Search.
+///
+/// Returns a [`ChangePlan`] preview to confirm via `confirm_and_apply`.
+pub fn set_campaign_frequency_caps(
+    config: &Config,
+    customer_id: &str,
+    campaign_id: &str,
+    caps: &[FrequencyCap],
+) -> Result<serde_json::Value> {
+    check_blocked_operation("set_campaign_frequency_caps", &config.safety)?;
+
+    if caps.is_empty() {
+        return Err(crate::error::McpGoogleAdsError::Validation(
+            "frequency_caps must not be empty — pass every cap the campaign should have, \
+             e.g. [{\"max_impressions\": 3, \"time_unit\": \"DAY\"}]"
+                .to_string(),
+        ));
+    }
+
+    let campaign = crate::tools::ids::validate_numeric_id("campaign_id", campaign_id)?;
+
+    let mut seen = std::collections::HashSet::new();
+    for cap in caps {
+        if cap.max_impressions < 1 {
+            return Err(crate::error::McpGoogleAdsError::Validation(format!(
+                "max_impressions must be at least 1, got {}",
+                cap.max_impressions
+            )));
+        }
+        if !seen.insert((cap.resolved_level(), cap.time_unit)) {
+            return Err(crate::error::McpGoogleAdsError::Validation(format!(
+                "two caps for {} per {} — keep one cap per level and window",
+                cap.resolved_level().as_api_str(),
+                cap.time_unit.as_api_str()
+            )));
+        }
+    }
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let campaign_resource = format!("customers/{}/campaigns/{}", cid, campaign);
+
+    let entries: Vec<serde_json::Value> = caps.iter().map(FrequencyCap::to_api_entry).collect();
+
+    let operations = vec![json!({
+        "campaignOperation": {
+            "update": {
+                "resourceName": campaign_resource,
+                "frequencyCaps": entries
+            },
+            "updateMask": "frequencyCaps"
+        }
+    })];
+
+    let changes = json!({
+        "campaign_id": campaign,
+        "frequency_caps": caps
+            .iter()
+            .map(|c| json!({
+                "max_impressions": c.max_impressions,
+                "time_unit": c.time_unit.as_api_str(),
+                "level": c.resolved_level().as_api_str(),
+            }))
+            .collect::<Vec<_>>(),
+        "note": "Replaces every existing frequency cap on the campaign.",
+    });
+
+    let plan = ChangePlan::new(
+        "set_campaign_frequency_caps".to_string(),
+        "campaign".to_string(),
+        campaign,
+        cid,
+        changes,
         false,
         operations,
     );
