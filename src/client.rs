@@ -459,7 +459,8 @@ impl GoogleAdsClient {
         customer_id: &str,
         operations: Vec<MutateOperation>,
     ) -> Result<MutateResponse> {
-        self.mutate_with_options(customer_id, operations, false).await
+        self.mutate_with_options(customer_id, operations, false)
+            .await
     }
 
     /// Like [`Self::mutate`], but with `validate_only=true` Google checks the
