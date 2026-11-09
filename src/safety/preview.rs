@@ -63,6 +63,11 @@ pub struct ChangePlan {
     /// Tells the agent how to continue the workflow with zero UI action.
     #[serde(default)]
     pub next_action_hint: Option<NextActionHint>,
+    /// Set once a `confirm_and_apply(dry_run=true)` of THIS plan succeeded
+    /// (for mutate plans: Google accepted it with `validateOnly=true`).
+    /// Satisfies `require_dry_run` for the later real apply of the same plan.
+    #[serde(default)]
+    pub dry_run_validated: bool,
 }
 
 impl ChangePlan {
@@ -88,6 +93,7 @@ impl ChangePlan {
             dispatch: PlanDispatch::MutateOperations,
             status_after_apply: None,
             next_action_hint: None,
+            dry_run_validated: false,
         }
     }
 
@@ -162,6 +168,21 @@ pub fn get_plan(plan_id: &str) -> Option<ChangePlan> {
         .expect("plan store lock poisoned")
         .get(plan_id)
         .cloned()
+}
+
+/// Record that the plan passed its dry run. Returns `false` if the plan is gone.
+pub fn mark_plan_dry_run_validated(plan_id: &str) -> bool {
+    match PENDING_PLANS
+        .lock()
+        .expect("plan store lock poisoned")
+        .get_mut(plan_id)
+    {
+        Some(plan) => {
+            plan.dry_run_validated = true;
+            true
+        }
+        None => false,
+    }
 }
 
 pub fn remove_plan(plan_id: &str) {
