@@ -459,6 +459,18 @@ impl GoogleAdsClient {
         customer_id: &str,
         operations: Vec<MutateOperation>,
     ) -> Result<MutateResponse> {
+        self.mutate_with_options(customer_id, operations, false).await
+    }
+
+    /// Like [`Self::mutate`], but with `validate_only=true` Google checks the
+    /// request in full (permissions, policy, field errors) WITHOUT writing
+    /// anything to the account.
+    pub async fn mutate_with_options(
+        &self,
+        customer_id: &str,
+        operations: Vec<MutateOperation>,
+        validate_only: bool,
+    ) -> Result<MutateResponse> {
         Self::validate_mutate_operations(&operations).map_err(McpGoogleAdsError::Validation)?;
 
         let normalized_id = Self::normalize_customer_id(customer_id);
@@ -478,6 +490,7 @@ impl GoogleAdsClient {
             // retry would commit another orphan. With partialFailure=false any
             // failing operation aborts the whole request and nothing is written.
             "partialFailure": false,
+            "validateOnly": validate_only,
         });
 
         let response = self
