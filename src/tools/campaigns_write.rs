@@ -47,6 +47,12 @@ pub struct DraftCampaignParams<'a> {
 pub fn draft_campaign(params: &DraftCampaignParams) -> Result<serde_json::Value> {
     check_budget_cap(params.daily_budget, &params.config.safety)?;
     check_blocked_operation("draft_campaign", &params.config.safety)?;
+    validate_bidding_strategy(
+        params.channel_type,
+        params.bidding_strategy,
+        params.target_cpa,
+        params.target_roas,
+    )?;
 
     let cid = crate::client::GoogleAdsClient::normalize_customer_id(params.customer_id);
     let mut operations: Vec<serde_json::Value> = Vec::new();
@@ -585,7 +591,11 @@ pub struct KeywordInput {
 /// - SEARCH: Google Search only. Search partners and Display expansion are
 ///   deliberately off — both default to opt-in spend that most advertisers
 ///   don't want; they can be enabled later via the UI or an update.
-/// - DISPLAY: Display Network only.
+/// - DISPLAY: the Display Network flag alone. The search-network fields are
+///   left out rather than sent as `false`: they have no meaning for a Display
+///   campaign, Google's own Display campaign example sends none, and
+///   `target_partner_search_network` is documented as applying only to select
+///   partner accounts.
 /// - Anything else (VIDEO, PERFORMANCE_MAX, SHOPPING, …): `None` — omit the
 ///   field and let the API infer the valid networks for the channel.
 fn network_settings_for_channel(channel_type: &str) -> Option<serde_json::Value> {
@@ -597,13 +607,64 @@ fn network_settings_for_channel(channel_type: &str) -> Option<serde_json::Value>
             "targetPartnerSearchNetwork": false
         })),
         "DISPLAY" => Some(json!({
-            "targetGoogleSearch": false,
-            "targetSearchNetwork": false,
-            "targetContentNetwork": true,
-            "targetPartnerSearchNetwork": false
+            "targetContentNetwork": true
         })),
         _ => None,
     }
+}
+
+/// Bidding strategies `draft_campaign` knows how to write.
+const KNOWN_BIDDING_STRATEGIES: &[&str] = &[
+    "MAXIMIZE_CONVERSIONS",
+    "MAXIMIZE_CONVERSION_VALUE",
+    "TARGET_CPA",
+    "TARGET_ROAS",
+    "MANUAL_CPC",
+    "TARGET_SPEND",
+    "MAXIMIZE_CLICKS",
+    "TARGET_IMPRESSION_SHARE",
+    "PERCENT_CPC",
+];
+
+/// Refuse a bidding request that would reach Google as a campaign without
+/// (valid) bidding.
+///
+/// [`apply_bidding_strategy`] silently writes nothing for an unknown strategy,
+/// or for TARGET_CPA / TARGET_ROAS without their target, and the create then
+/// fails on the server with a generic message. A Display campaign also cannot
+/// use Target impression share (a Search strategy) or Percent CPC (hotels).
+fn validate_bidding_strategy(
+    channel_type: &str,
+    strategy: &str,
+    target_cpa: Option<f64>,
+    target_roas: Option<f64>,
+) -> Result<()> {
+    if !KNOWN_BIDDING_STRATEGIES.contains(&strategy) {
+        return Err(crate::error::McpGoogleAdsError::Validation(format!(
+            "unknown bidding_strategy '{}'. Use one of: {}",
+            strategy,
+            KNOWN_BIDDING_STRATEGIES.join(", ")
+        )));
+    }
+    if strategy == "TARGET_CPA" && target_cpa.is_none() {
+        return Err(crate::error::McpGoogleAdsError::Validation(
+            "TARGET_CPA needs target_cpa (or use MAXIMIZE_CONVERSIONS with target_cpa)".to_string(),
+        ));
+    }
+    if strategy == "TARGET_ROAS" && target_roas.is_none() {
+        return Err(crate::error::McpGoogleAdsError::Validation(
+            "TARGET_ROAS needs target_roas".to_string(),
+        ));
+    }
+    if channel_type == "DISPLAY" && matches!(strategy, "TARGET_IMPRESSION_SHARE" | "PERCENT_CPC") {
+        return Err(crate::error::McpGoogleAdsError::Validation(format!(
+            "{} is not available for Display campaigns — use MAXIMIZE_CONVERSIONS (optionally \
+             with target_cpa), TARGET_CPA, MAXIMIZE_CONVERSION_VALUE, TARGET_ROAS, \
+             MAXIMIZE_CLICKS or MANUAL_CPC",
+            strategy
+        )));
+    }
+    Ok(())
 }
 
 /// Apply a bidding strategy to a campaign create JSON value.
@@ -1057,14 +1118,91 @@ mod tests {
     fn test_draft_campaign_display_network_settings() {
         // A DISPLAY campaign with targetGoogleSearch=true is rejected with
         // OPERATION_NOT_PERMITTED_FOR_CONTEXT on network_settings.target_google_search.
+        // The search-network fields are left out entirely: only the Display
+        // Network flag is sent.
         let ops = draft_ops_for_channel("DISPLAY");
         let ns = ops
             .iter()
             .find_map(|op| op.pointer("/campaignOperation/create/networkSettings"))
             .expect("networkSettings present for DISPLAY");
-        assert_eq!(ns["targetGoogleSearch"], json!(false));
-        assert_eq!(ns["targetSearchNetwork"], json!(false));
-        assert_eq!(ns["targetContentNetwork"], json!(true));
+        assert_eq!(ns, &json!({ "targetContentNetwork": true }));
+    }
+
+    #[test]
+    fn test_draft_display_campaign_is_a_complete_display_build() {
+        let config = Config::default();
+        let preview = draft_campaign(&DraftCampaignParams {
+            config: &config,
+            customer_id: "123-456-7890",
+            campaign_name: "Display | Awareness",
+            daily_budget: 10.0,
+            bidding_strategy: "MAXIMIZE_CONVERSIONS",
+            target_cpa: Some(40.0),
+            target_roas: None,
+            channel_type: "DISPLAY",
+            ad_group_name: "Huiseigenaren",
+            keywords: vec![],
+            geo_target_ids: vec!["2840".to_string()],
+            language_ids: vec!["1000".to_string()],
+            status: None,
+        })
+        .expect("ok");
+        let plan_id = preview["plan_id"].as_str().expect("plan_id");
+        let plan = crate::safety::preview::get_plan(plan_id).expect("stored");
+
+        let campaign = plan
+            .mutate_operations
+            .iter()
+            .find_map(|op| op.pointer("/campaignOperation/create"))
+            .expect("campaign create");
+        assert_eq!(campaign["advertisingChannelType"], "DISPLAY");
+        assert_eq!(campaign["status"], "PAUSED");
+        assert_eq!(
+            campaign["maximizeConversions"]["targetCpaMicros"],
+            "40000000"
+        );
+        for search_field in [
+            "targetGoogleSearch",
+            "targetSearchNetwork",
+            "targetPartnerSearchNetwork",
+        ] {
+            assert!(
+                campaign["networkSettings"].get(search_field).is_none(),
+                "{search_field} must not be sent for DISPLAY"
+            );
+        }
+
+        let ad_group = plan
+            .mutate_operations
+            .iter()
+            .find_map(|op| op.pointer("/adGroupOperation/create"))
+            .expect("ad group create");
+        assert_eq!(ad_group["type"], "DISPLAY_STANDARD");
+        assert_eq!(ad_group["status"], "PAUSED");
+        assert_eq!(ad_group["campaign"], "customers/1234567890/campaigns/-2");
+        crate::safety::preview::remove_plan(plan_id);
+    }
+
+    #[test]
+    fn test_bidding_strategy_validation() {
+        assert!(validate_bidding_strategy("DISPLAY", "MAXIMIZE_CONVERSIONS", None, None).is_ok());
+        assert!(validate_bidding_strategy("DISPLAY", "MAXIMIZE_CLICKS", None, None).is_ok());
+        assert!(validate_bidding_strategy("DISPLAY", "TARGET_CPA", Some(30.0), None).is_ok());
+
+        let unknown = validate_bidding_strategy("DISPLAY", "VIEWABLE_CPM", None, None);
+        assert!(unknown
+            .unwrap_err()
+            .to_string()
+            .contains("unknown bidding_strategy"));
+        assert!(validate_bidding_strategy("SEARCH", "TARGET_CPA", None, None).is_err());
+        assert!(validate_bidding_strategy("SEARCH", "TARGET_ROAS", None, None).is_err());
+        let tis = validate_bidding_strategy("DISPLAY", "TARGET_IMPRESSION_SHARE", None, None);
+        assert!(tis
+            .unwrap_err()
+            .to_string()
+            .contains("not available for Display"));
+        // Still fine for Search.
+        assert!(validate_bidding_strategy("SEARCH", "TARGET_IMPRESSION_SHARE", None, None).is_ok());
     }
 
     #[test]

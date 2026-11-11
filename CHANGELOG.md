@@ -47,6 +47,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   campaign rejects a Search ad group, so the tool could not add an ad group to
   one at all.
 
+- A Display awareness campaign could not be built end to end: prospecting
+  needs audiences, placements and creatives the remarketing tools do not
+  cover. Ten tools close that gap, each a preview confirmed through
+  `confirm_and_apply`.
+
+  `create_custom_segment` creates a custom segment (the API's
+  `CustomAudience`) from keywords, URLs and Android apps, with type `AUTO`
+  (default) or `SEARCH`. `INTEREST` and `PURCHASE_INTENT` are left out: the v25
+  resource documents both as not allowed for new audiences. Custom audiences
+  are not a `googleAds:mutate` operation, so the plan carries a new dispatch,
+  `customAudiences:mutate`, with its own operation whitelist, and the applied
+  response lifts the new ID into `custom_segment_ids`.
+  `add_ad_group_custom_segments` and `add_ad_group_user_interests` (affinity
+  and in-market) add them to ad groups the way `add_ad_group_audiences` adds
+  user lists.
+
+  `add_ad_group_placements` targets websites on an ad group, or excludes
+  websites and single apps from that ad group only. `add_account_exclusions`
+  writes `CustomerNegativeCriterion` entries — websites, app categories, apps
+  and content labels — after reading what the account already excludes: a
+  duplicate would fail the whole atomic mutate, so existing ones are skipped,
+  and a request with nothing new answers `NO_CHANGES` instead of a plan.
+  Content labels are checked against the v25 enum; excluding all five digital
+  content labels is refused (Display stops serving), and labels Google lists
+  as removed (`PARKED_DOMAIN`, 10 February 2026) or YouTube-only are flagged in
+  the preview.
+
+  `set_campaign_device_modifiers` sets device bid modifiers (0 excludes the
+  device), updating the device criteria a campaign has and creating the rest,
+  and refuses excluding every device.
+
+  `upload_display_ad` turns a local file into an ad in one atomic mutate: an
+  HTML5 ZIP becomes a media bundle asset plus a `display_upload_ad`
+  (`HTML5_UPLOAD_AD`), an image becomes an image asset plus an `image_ad`,
+  linked by a temporary resource name. The file is checked before a plan
+  exists — absolute path, extension, magic bytes, Google's 600 KB / 150 KB
+  limits, and image dimensions against the standard sizes (a warning). The
+  preview shows the size and SHA-256, never the base64.
+
+  `create_custom_conversion_goal` and `set_campaign_custom_conversion_goal`
+  make one campaign bid on chosen conversion actions — secondary ones too —
+  without touching the account defaults or other campaigns. A campaign
+  combines one custom goal with its standard goals, so by default
+  (`exclusive`) the tool also reads the campaign's standard goals and sets the
+  biddable ones to not biddable in the same mutate. `set_campaign_conversion_goals`
+  sets standard category × origin goals per campaign directly.
+
+- `confirm_and_apply` takes `validate_only`. The plan is sent with
+  `validateOnly: true`: Google checks every operation exactly as for a real
+  apply and writes nothing, and the plan is kept for the real apply. It is how
+  a new tool is tried against a live account. It is allowed under
+  `require_dry_run` and needs no `confirmed_twice`, because nothing changes.
+  Recommendation plans answer `NOT_VALIDATED` without sending anything: their
+  RPCs have no validate-only mode in v25, and claiming a validation that did
+  not happen would be worse than saying so.
+
+- `update_ad_group` takes `audience_targeting_mode` (`TARGETING` or
+  `OBSERVATION`): whether the ad group's audience segments narrow reach or only
+  report. It is the AUDIENCE target restriction, and Google replaces the whole
+  restriction list under that mask, so the tool reads the ad group's current
+  restrictions and changes only the AUDIENCE entry, as Google's own example
+  does.
+
 ### Changed
 
 - Library callers: `create_ad_group` and `update_ad_group` gain a trailing
@@ -59,6 +122,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   name or a display name in place of a numeric ID the same way, and collapse a
   repeated ID before it becomes a duplicate operation Google would reject the
   whole batch for.
+
+- Library callers: `update_ad_group` gains a trailing
+  `Option<AudienceTargetingUpdate>`, and `ConfirmApplyInput` a `validate_only`
+  field (`Default` keeps it off). `confirm_and_apply_with_client` runs an apply
+  against a given client, so tests no longer need the process-wide base URL
+  override. `GoogleAdsClient::mutate_with_options` adds the validate-only flag;
+  `mutate` is unchanged.
+
+- Placement URLs over 250 characters and `adsenseformobileapps.com` are refused
+  before any request, per the criteria guide. This also applies to
+  `exclude_placements`.
+
+- `draft_keywords` documents that it also writes Display keywords: in a
+  `DISPLAY_STANDARD` ad group the same keyword criterion is contextual
+  targeting.
+
+### Fixed
+
+- `draft_campaign` with `channel_type: "DISPLAY"` sent the search-network
+  fields (`targetGoogleSearch`, `targetSearchNetwork`,
+  `targetPartnerSearchNetwork`) as `false`. They mean nothing for a Display
+  campaign, Google's own Display example sends none, and the partner-network
+  field is documented as applying only to select accounts. Only
+  `targetContentNetwork: true` is sent now.
+
+- `draft_campaign` sent a campaign without any bidding when the strategy was
+  unknown, or was `TARGET_CPA` / `TARGET_ROAS` without its target, and the
+  create then failed on the server with a generic message. Those are refused
+  up front now, as are `TARGET_IMPRESSION_SHARE` and `PERCENT_CPC` on a
+  Display campaign.
 
 ## [0.13.0] - 2026-08-24
 

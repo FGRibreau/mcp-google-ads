@@ -10,17 +10,22 @@ use crate::models::{AdStatus, NextActionHint};
 /// Discriminator that tells `confirm_and_apply` how to dispatch this plan.
 ///
 /// - `MutateOperations` (default) -> POST `/v25/customers/{cid}/googleAds:mutate`
+/// - `CustomAudiences` -> POST `/v25/customers/{cid}/customAudiences:mutate`
 /// - `ApplyRecommendation` -> POST `/v25/customers/{cid}/recommendations:apply`
 /// - `DismissRecommendation` -> POST `/v25/customers/{cid}/recommendations:dismiss`
 ///
 /// The recommendation variants exist because `applyRecommendationOperation` and
 /// `dismissRecommendationOperation` are NOT valid `MutateOperation` keys in
-/// Google Ads v25 — they live on dedicated RPCs.
+/// Google Ads v25 — they live on dedicated RPCs. Custom audiences likewise have
+/// no `MutateOperation` variant and are mutated through their own service.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanDispatch {
     #[default]
     MutateOperations,
+    /// `mutate_operations` holds bare `CustomAudienceOperation`s
+    /// (`{"create": {...}}`), sent to `customAudiences:mutate`.
+    CustomAudiences,
     ApplyRecommendation {
         /// Full resource name(s): `customers/{cid}/recommendations/{rec_id}`.
         resource_names: Vec<String>,
@@ -48,8 +53,9 @@ pub struct ChangePlan {
     pub requires_double_confirm: bool,
     /// The actual mutate operations to execute (serialized for the API).
     ///
-    /// Empty for `dispatch != MutateOperations` (recommendation plans route
-    /// through dedicated RPCs and do not use this field).
+    /// `MutateOperation`s for `MutateOperations`, bare
+    /// `CustomAudienceOperation`s for `CustomAudiences`, and empty for the
+    /// recommendation dispatches (those carry resource names instead).
     pub mutate_operations: Vec<serde_json::Value>,
     /// Dispatch route for [`crate::tools::confirm::confirm_and_apply`].
     #[serde(default)]

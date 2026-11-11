@@ -4,7 +4,9 @@ use crate::config::Config;
 use crate::error::{McpGoogleAdsError, Result};
 use crate::safety::guards::check_blocked_operation;
 use crate::safety::preview::{store_plan, ChangePlan};
-use crate::tools::ids::{dedupe_preserving_order, validate_numeric_id, MAX_CRITERIA_PER_PLAN};
+use crate::tools::ids::{
+    check_fanout, dedupe_preserving_order, validate_id_list, validate_numeric_id,
+};
 
 const VALID_TARGETING_MODES: &[&str] = &["TARGETING", "OBSERVATION"];
 
@@ -105,15 +107,171 @@ fn ad_group_id_list(ad_group_ids: &[String]) -> Result<Vec<String>> {
 
 /// Refuse a plan that would write more criteria than one batch should carry.
 fn check_criteria_count(ad_groups: usize, lists: usize) -> Result<usize> {
-    let total = ad_groups * lists;
-    if total > MAX_CRITERIA_PER_PLAN {
-        return Err(McpGoogleAdsError::Validation(format!(
-            "plan would write {} criteria ({} ad groups × {} lists), over the {} limit — \
-             split it into smaller batches",
-            total, ad_groups, lists, MAX_CRITERIA_PER_PLAN
-        )));
+    check_fanout(ad_groups, lists, "lists")
+}
+
+/// What decides whether ad group audience criteria narrow reach — shared by
+/// every tool that adds them.
+const AUDIENCE_MODE_NOTE: &str = "Whether these segments restrict reach (Targeting) or only \
+     inform bids (Observation) follows the ad group's AUDIENCE target restriction — set it with \
+     update_ad_group(audience_targeting_mode=...). Optimized targeting can still serve beyond \
+     them — turn it off with update_ad_group(optimized_targeting_enabled=false).";
+
+/// One positive `adGroupCriterionOperation.create` per (ad group × item).
+///
+/// `criterion` turns an item ID into the criterion field and its value, e.g.
+/// `("userInterest", {"userInterestCategory": ...})`.
+fn positive_ad_group_criteria(
+    cid: &str,
+    ad_groups: &[String],
+    items: &[String],
+    criterion: impl Fn(&str) -> (&'static str, serde_json::Value),
+) -> Vec<serde_json::Value> {
+    let mut operations = Vec::with_capacity(ad_groups.len() * items.len());
+    for ad_group_id in ad_groups {
+        for item in items {
+            let (field, value) = criterion(item);
+            let mut create = json!({
+                "adGroup": format!("customers/{}/adGroups/{}", cid, ad_group_id),
+            });
+            create[field] = value;
+            operations.push(json!({ "adGroupCriterionOperation": { "create": create } }));
+        }
     }
-    Ok(total)
+    operations
+}
+
+/// Add custom segments to one or more ad groups as positive audience criteria.
+///
+/// A custom segment is the Google Ads UI name for the API's `CustomAudience`
+/// (create one with `create_custom_segment`). Writes one
+/// `adGroupCriterionOperation.create` with `custom_audience` per (ad group ×
+/// segment). The API documents custom audience criteria as positive only, so
+/// there is no negative variant.
+///
+/// Returns a [`ChangePlan`] preview to be confirmed via `confirm_and_apply`.
+/// Reversible (remove the resulting criteria), so no double confirmation.
+pub fn add_ad_group_custom_segments(
+    config: &Config,
+    customer_id: &str,
+    ad_group_ids: &[String],
+    custom_segment_ids: &[String],
+) -> Result<serde_json::Value> {
+    check_blocked_operation("add_ad_group_custom_segments", &config.safety)?;
+
+    let ad_groups = validate_id_list(
+        "ad_group_ids",
+        "ad_group_id",
+        ad_group_ids,
+        "name every ad group the segments should target",
+    )?;
+    let segments = validate_id_list(
+        "custom_segment_ids",
+        "custom_segment_id",
+        custom_segment_ids,
+        "pass numeric custom segment IDs (create_custom_segment returns them as \
+         custom_segment_ids; or SELECT custom_audience.id, custom_audience.name FROM \
+         custom_audience)",
+    )?;
+    let total = check_fanout(ad_groups.len(), segments.len(), "segments")?;
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let operations = positive_ad_group_criteria(&cid, &ad_groups, &segments, |id| {
+        (
+            "customAudience",
+            json!({ "customAudience": format!("customers/{}/customAudiences/{}", cid, id) }),
+        )
+    });
+
+    let changes = json!({
+        "ad_group_ids": ad_groups,
+        "custom_segment_ids": segments,
+        "total_criteria": total,
+        "negative": false,
+        "note": AUDIENCE_MODE_NOTE,
+    });
+
+    let plan = ChangePlan::new(
+        "add_ad_group_custom_segments".to_string(),
+        "ad_group_criterion".to_string(),
+        ad_groups.first().cloned().unwrap_or_default(),
+        cid,
+        changes,
+        false,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
+/// Add user interests — affinity and in-market segments — to one or more ad
+/// groups as positive audience criteria.
+///
+/// Writes one `adGroupCriterionOperation.create` with `user_interest` per (ad
+/// group × interest), referencing `customers/{cid}/userInterests/{id}`. Look
+/// the IDs up with `SELECT user_interest.user_interest_id, user_interest.name,
+/// user_interest.taxonomy_type, user_interest.availabilities FROM
+/// user_interest`; the API notes that some user interests are only available
+/// for specific campaign types, which `availabilities` shows.
+///
+/// Returns a [`ChangePlan`] preview to be confirmed via `confirm_and_apply`.
+/// Reversible (remove the resulting criteria), so no double confirmation.
+pub fn add_ad_group_user_interests(
+    config: &Config,
+    customer_id: &str,
+    ad_group_ids: &[String],
+    user_interest_ids: &[String],
+) -> Result<serde_json::Value> {
+    check_blocked_operation("add_ad_group_user_interests", &config.safety)?;
+
+    let ad_groups = validate_id_list(
+        "ad_group_ids",
+        "ad_group_id",
+        ad_group_ids,
+        "name every ad group the interests should target",
+    )?;
+    let interests = validate_id_list(
+        "user_interest_ids",
+        "user_interest_id",
+        user_interest_ids,
+        "pass numeric user interest IDs (SELECT user_interest.user_interest_id, \
+         user_interest.name, user_interest.taxonomy_type FROM user_interest)",
+    )?;
+    let total = check_fanout(ad_groups.len(), interests.len(), "interests")?;
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let operations = positive_ad_group_criteria(&cid, &ad_groups, &interests, |id| {
+        (
+            "userInterest",
+            json!({
+                "userInterestCategory": format!("customers/{}/userInterests/{}", cid, id)
+            }),
+        )
+    });
+
+    let changes = json!({
+        "ad_group_ids": ad_groups,
+        "user_interest_ids": interests,
+        "total_criteria": total,
+        "negative": false,
+        "note": AUDIENCE_MODE_NOTE,
+    });
+
+    let plan = ChangePlan::new(
+        "add_ad_group_user_interests".to_string(),
+        "ad_group_criterion".to_string(),
+        ad_groups.first().cloned().unwrap_or_default(),
+        cid,
+        changes,
+        false,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
 }
 
 /// Add user lists as positive audience criteria on one or more ad groups.
@@ -179,8 +337,9 @@ pub fn add_ad_group_audiences(
         "total_criteria": total,
         "negative": false,
         "note": "Whether these lists restrict reach (Targeting) or only inform bids \
-                 (Observation) follows the ad group's AUDIENCE target restriction. \
-                 Optimized targeting can still serve beyond the lists — turn it off with \
+                 (Observation) follows the ad group's AUDIENCE target restriction — set it \
+                 with update_ad_group(audience_targeting_mode=...). Optimized targeting can \
+                 still serve beyond the lists — turn it off with \
                  update_ad_group(optimized_targeting_enabled=false) for pure remarketing.",
     });
 

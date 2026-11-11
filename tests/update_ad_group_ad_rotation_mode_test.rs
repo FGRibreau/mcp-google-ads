@@ -19,6 +19,7 @@ fn rotation_mode_lands_in_mutate_operation_and_update_mask() {
         None,
         Some(AdRotationMode::RotateForever),
         None,
+        None,
     )
     .unwrap();
     assert_eq!(preview["changes"]["ad_rotation_mode"], "ROTATE_FOREVER");
@@ -45,6 +46,7 @@ fn rotation_mode_combines_with_bid_in_update_mask() {
         Some(2_000_000),
         Some(AdRotationMode::Optimize),
         None,
+        None,
     )
     .unwrap();
 
@@ -59,7 +61,7 @@ fn rotation_mode_combines_with_bid_in_update_mask() {
 #[test]
 fn no_fields_at_all_is_rejected_with_rotation_mentioned() {
     let config = Config::default();
-    let err = update_ad_group(&config, "123-456-7890", "555", None, None, None, None)
+    let err = update_ad_group(&config, "123-456-7890", "555", None, None, None, None, None)
         .err()
         .map(|e| e.to_string())
         .unwrap_or_default();

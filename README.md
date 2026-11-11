@@ -89,7 +89,7 @@ An MCP server that gives Claude full read + write access to Google Ads accounts 
 
 ## Features
 
-- **67 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, Display remarketing (ad group audiences, exclusions, frequency caps, placement exclusions), bidding, scheduling, keyword planner, conversions, geo targeting, policy
+- **77 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, Display remarketing (ad group audiences, exclusions, frequency caps, placement exclusions), Display awareness (custom segments, interests, placements, account exclusions, device modifiers, uploaded HTML5/image ads, per-campaign conversion goals), bidding, scheduling, keyword planner, conversions, geo targeting, policy
 - **Two-step safety** - All mutations return a preview; nothing executes until you confirm
 - **Budget guardrails** - Configurable daily budget cap, bid increase limits, broad+manual CPC blocker
 - **Audit logging** - Every mutation logged to a local JSON file with timestamp and dry-run status
@@ -183,13 +183,13 @@ All configuration is via environment variables. No config files.
 | `get_policy_issues` | Disapproved or limited ads and policy violations |
 | `get_conversion_actions` | Conversion actions configured in the account |
 
-### Write (43 tools)
+### Write (53 tools)
 
 All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` to execute.
 
 | Tool | Description |
 |------|-------------|
-| `draft_campaign` | Create campaign + ad group + keywords. Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
+| `draft_campaign` | Create campaign + ad group + keywords. Defaults to PAUSED; pass `status: "ENABLED"` to opt out. `channel_type: "DISPLAY"` sends only `targetContentNetwork` (no search-network settings) and a `DISPLAY_STANDARD` ad group; unknown bidding strategies, `TARGET_CPA`/`TARGET_ROAS` without a target, and Search-only strategies on Display are refused. |
 | `update_campaign` | Modify budget, bidding, targeting |
 | `exclude_geo_target` | Exclude a location from a campaign (negative location criterion) |
 | `remove_geo_target` | Remove a positively-targeted location from a campaign (destructive) |
@@ -197,8 +197,8 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `draft_responsive_search_ad` | Create RSA (3-15 headlines, 2-4 descriptions). Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
 | `update_responsive_search_ad` | Edit an existing RSA in place — headlines, descriptions, final URL, display paths. Only the fields provided are written; preserves the ad's ID and asset performance history, unlike remove + re-create. |
 | `create_ad_group` | Create ad group in existing campaign. Defaults to PAUSED; pass `status: "ENABLED"` to opt out. `ad_group_type` defaults to `SEARCH_STANDARD`; pass `DISPLAY_STANDARD` for a Display campaign. |
-| `update_ad_group` | Modify ad group name, CPC bid, ad rotation mode or optimized targeting (`optimized_targeting_enabled: false` keeps a Display ad group on its lists) |
-| `draft_keywords` | Add keywords with match types and optional per-keyword `final_url` (landing page override) |
+| `update_ad_group` | Modify ad group name, CPC bid, ad rotation mode, optimized targeting (`optimized_targeting_enabled: false` keeps a Display ad group on its lists) or `audience_targeting_mode` (`TARGETING` / `OBSERVATION`, written as the AUDIENCE target restriction after reading the current ones, so other dimensions are kept) |
+| `draft_keywords` | Add keywords with match types and optional per-keyword `final_url` (landing page override). In a `DISPLAY_STANDARD` ad group these are Display (contextual) keywords — use `BROAD`. |
 | `remove_keywords` | Remove keywords from ad group (destructive) |
 | `update_keyword_final_url` | Change an existing keyword's landing page in place (preserves quality score history, unlike remove + re-create) |
 | `add_negative_keywords` | Block irrelevant searches (campaign-level) |
@@ -226,12 +226,22 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `set_campaign_schedule` | Ad scheduling / dayparting |
 | `set_campaign_frequency_caps` | Impression frequency caps per DAY/WEEK/MONTH for Display and Video campaigns (the list replaces existing caps) |
 | `exclude_placements` | Exclude websites, mobile app categories (`69500` = All Apps) and single apps from a campaign |
+| `add_ad_group_placements` | Target websites on Display ad groups, or (`negative: true`) exclude websites and single apps from those ad groups only |
+| `add_account_exclusions` | Account-wide exclusions: websites, app categories, apps and content labels (v25 `ContentLabelType`). Reads existing exclusions first and skips them; refuses excluding all five digital content labels; flags deprecated / non-Display labels |
+| `create_custom_segment` | Create a custom segment (API: custom audience) from keywords, URLs and Android apps, type `AUTO` or `SEARCH`; sent through `customAudiences:mutate`, the new ID comes back as `custom_segment_ids` |
+| `add_ad_group_custom_segments` | Add custom segments to ad groups as audience criteria |
+| `add_ad_group_user_interests` | Add affinity / in-market segments (user interests, e.g. `92926`) to ad groups |
+| `set_campaign_device_modifiers` | Device bid modifiers (desktop, mobile, tablet, connected TV; `0` = excluded). Reads existing device criteria and updates or creates them |
+| `upload_display_ad` | Uploaded display ad from a local file in one atomic mutate: HTML5 ZIP (≤ 600 KB) as media bundle + `display_upload_ad`, or JPG/PNG/GIF (≤ 150 KB) as image asset + `image_ad`. Checked locally first; the preview shows size and SHA-256, not the content. Defaults to PAUSED. |
+| `create_custom_conversion_goal` | A named set of conversion actions (primary or secondary) a campaign can bid on |
+| `set_campaign_custom_conversion_goal` | Make one campaign bid on a custom goal; `exclusive` (default) also switches its standard goals off, so it bids on those actions only. Account defaults and other campaigns are untouched |
+| `set_campaign_conversion_goals` | Set which category × origin goals one campaign bids on |
 | `apply_recommendation` | Apply a Google recommendation, optionally with type-specific `apply_parameters` |
 | `dismiss_recommendation` | Dismiss a recommendation |
 | `pause_entity` | Pause campaign/ad group/ad/keyword |
 | `enable_entity` | Enable paused entity |
 | `remove_entity` | Permanently remove entity (destructive) |
-| `confirm_and_apply` | Execute a previewed change (dry_run=true default) |
+| `confirm_and_apply` | Execute a previewed change (dry_run=true default). `validate_only: true` sends the plan with `validateOnly` — Google validates it, nothing changes, the plan is kept |
 
 ---
 
@@ -248,7 +258,8 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | **`require_dry_run` hard guard** | When `GOOGLE_ADS_REQUIRE_DRY_RUN=true`, calling `confirm_and_apply` with `dry_run=false` returns `Err(DryRunRequired)` BEFORE any HTTP traffic. Pass `bypass_require_dry_run=true` for a one-shot override. |
 | **Double-confirm hard guard** | Destructive ops flagged `requires_double_confirm` need `confirmed_twice=true` or return `Err(DoubleConfirmRequired)`. |
 | **Policy exemptions are opt-in** | A mutate blocked by an *exemptible* ad policy is never silently exempted. The error names each policy and the exact offending text; pass `exempt_policy_violations=true` to retry the same plan with `exemptPolicyViolationKeys` (what the Google Ads UI does automatically). Applied exemptions are echoed back as `policy_exemptions_requested`. |
-| **MutateOperation whitelist** | Unknown top-level operation keys (typos, recommendation ops mis-routed) are rejected client-side BEFORE the HTTP call with a clear error pointing at the correct tool. |
+| **Validate-only runs** | `confirm_and_apply(validate_only=true)` sends the plan with `validateOnly: true`: Google checks every operation as for a real apply and nothing is written. Allowed under `require_dry_run` and without `confirmed_twice`; the plan stays for the real apply. Recommendation plans answer `NOT_VALIDATED` (their RPCs have no validate-only mode). |
+| **MutateOperation whitelist** | Unknown top-level operation keys (typos, recommendation ops mis-routed) are rejected client-side BEFORE the HTTP call with a clear error pointing at the correct tool. Custom audience operations, which go to `customAudiences:mutate`, have their own whitelist (`create` / `update` / `remove` / `updateMask`). |
 | **Blocked operations** | Configure `GOOGLE_ADS_BLOCKED_OPS` to disable specific tools |
 | **Read-only mode** | Set `GOOGLE_ADS_READ_ONLY=true` to disable all writes |
 | **Audit logging** | Every mutation logged with timestamp, operation, changes, dry_run status |

@@ -29,12 +29,19 @@ pub struct ConfirmApplyInput {
     /// eligible under the policy's permitted use, which is the caller's call to
     /// make, not ours. Default: `false`.
     pub exempt_policy_violations: bool,
+    /// Send the plan to Google as a validate-only request: Google checks every
+    /// operation as it would for a real apply and changes nothing. Takes
+    /// precedence over `dry_run`, is not blocked by `require_dry_run` or the
+    /// double-confirm guard (nothing is written), and keeps the plan so it can
+    /// be applied afterwards. Default: `false`.
+    pub validate_only: bool,
 }
 
 /// Confirm and apply a previously drafted change plan.
 ///
 /// Dispatch routing:
 /// - [`PlanDispatch::MutateOperations`] -> `POST /googleAds:mutate`
+/// - [`PlanDispatch::CustomAudiences`] -> `POST /customAudiences:mutate`
 /// - [`PlanDispatch::ApplyRecommendation`] -> `POST /recommendations:apply`
 /// - [`PlanDispatch::DismissRecommendation`] -> `POST /recommendations:dismiss`
 ///
@@ -44,6 +51,10 @@ pub struct ConfirmApplyInput {
 /// - `plan.requires_double_confirm && !confirmed_twice && !dry_run`
 ///   -> [`McpGoogleAdsError::DoubleConfirmRequired`]
 ///
+/// `validate_only = true` skips both guards and the dry-run preview: the plan
+/// is sent with `validateOnly: true`, so Google validates it and nothing is
+/// written. The plan is kept either way.
+///
 /// On success the plan is removed from the store and the mutation result
 /// is logged to the audit file. On failure the plan is kept so the caller
 /// can retry. Successful responses NEVER include a warning — the warning
@@ -52,12 +63,32 @@ pub async fn confirm_and_apply(
     config: &Config,
     input: ConfirmApplyInput,
 ) -> Result<serde_json::Value> {
+    run_confirm(config, input, None).await
+}
+
+/// [`confirm_and_apply`] with an explicit client instead of one built from
+/// `config` and the `GOOGLE_ADS_API_BASE_URL` override — so tests can point a
+/// single apply at a mock server without touching process-wide state.
+pub async fn confirm_and_apply_with_client(
+    client: &GoogleAdsClient,
+    config: &Config,
+    input: ConfirmApplyInput,
+) -> Result<serde_json::Value> {
+    run_confirm(config, input, Some(client)).await
+}
+
+async fn run_confirm(
+    config: &Config,
+    input: ConfirmApplyInput,
+    client: Option<&GoogleAdsClient>,
+) -> Result<serde_json::Value> {
     let ConfirmApplyInput {
         plan_id,
         dry_run,
         bypass_require_dry_run,
         confirmed_twice,
         exempt_policy_violations,
+        validate_only,
     } = input;
 
     let plan = get_plan(&plan_id).ok_or_else(|| {
@@ -66,6 +97,18 @@ pub async fn confirm_and_apply(
             plan_id
         ))
     })?;
+
+    // A client is built only once a request is actually going to be sent, so
+    // a guard rejection never depends on client construction.
+    let mut owned_client = None;
+
+    // Validate-only: Google checks the plan, nothing is written, the plan stays.
+    // Safe by construction, so neither the dry-run nor the double-confirm guard
+    // applies.
+    if validate_only {
+        let client = resolve_client(client, &mut owned_client, config)?;
+        return validate_plan(client, config, &plan, &plan_id, exempt_policy_violations).await;
+    }
 
     // Dry run: return preview without executing.
     if dry_run {
@@ -94,8 +137,125 @@ pub async fn confirm_and_apply(
         return Err(McpGoogleAdsError::DoubleConfirmRequired);
     }
 
-    let client = GoogleAdsClient::new(config)?;
-    apply_plan(&client, config, &plan, &plan_id, exempt_policy_violations).await
+    let client = resolve_client(client, &mut owned_client, config)?;
+    apply_plan(client, config, &plan, &plan_id, exempt_policy_violations).await
+}
+
+/// The caller's client, or a new one built from `config` and kept in `owned`.
+fn resolve_client<'a>(
+    client: Option<&'a GoogleAdsClient>,
+    owned: &'a mut Option<GoogleAdsClient>,
+    config: &Config,
+) -> Result<&'a GoogleAdsClient> {
+    match client {
+        Some(client) => Ok(client),
+        None => Ok(owned.insert(GoogleAdsClient::new(config)?)),
+    }
+}
+
+/// Send the plan as a validate-only request and report the verdict.
+///
+/// Nothing is written and the plan is kept whatever the outcome, so the same
+/// `plan_id` can be applied for real afterwards. A rejection comes back as the
+/// usual error, with Google's field-level reasons.
+///
+/// The recommendation RPCs have no validate-only mode in v25
+/// (`ApplyRecommendationRequest` and `DismissRecommendationRequest` carry no
+/// `validate_only` field), so for those plans nothing is sent: the response
+/// says so plainly instead of claiming a validation that never happened.
+async fn validate_plan(
+    client: &GoogleAdsClient,
+    config: &Config,
+    plan: &ChangePlan,
+    plan_id: &str,
+    exempt_policy_violations: bool,
+) -> Result<serde_json::Value> {
+    let log_file = config.safety.log_file.to_string_lossy().to_string();
+
+    let verdict: Result<Option<serde_json::Value>> = match &plan.dispatch {
+        PlanDispatch::MutateOperations => {
+            apply_mutate_operations(client, plan, exempt_policy_violations, true)
+                .await
+                .map(Some)
+        }
+        PlanDispatch::CustomAudiences => client
+            .mutate_custom_audiences(&plan.customer_id, plan.mutate_operations.clone(), true)
+            .await
+            .map(|_| Some(json!({}))),
+        // No validate-only mode on these RPCs: run the local checks only.
+        PlanDispatch::ApplyRecommendation {
+            apply_parameters, ..
+        } => apply_parameters
+            .as_ref()
+            .map_or(Ok(()), crate::client::validate_apply_parameters)
+            .map(|_| None),
+        PlanDispatch::DismissRecommendation { .. } => Ok(None),
+    };
+
+    let mut out = match verdict {
+        Ok(Some(google_result)) => {
+            let _ = audit::log_mutation(&audit::MutationLogEntry {
+                log_file: &log_file,
+                operation: &plan.operation,
+                customer_id: &plan.customer_id,
+                entity_type: &plan.entity_type,
+                entity_id: &plan.entity_id,
+                changes: &plan.changes,
+                dry_run: true,
+                result: "VALIDATED",
+                error: "",
+            });
+            let mut out = json!({
+                "status": "VALIDATED",
+                "validate_only": true,
+                "validated_by_google": true,
+                "applied": false,
+                "message": "Google validated every operation in this plan (validateOnly=true). \
+                            Nothing was changed. The plan is kept: call confirm_and_apply with \
+                            the same plan_id and dry_run=false to apply it.",
+            });
+            // Exemptions Google would need, when the caller asked for them.
+            for key in ["policy_exemptions_requested", "policy_exemption_note"] {
+                if let Some(value) = google_result.get(key) {
+                    out[key] = value.clone();
+                }
+            }
+            out
+        }
+        Ok(None) => json!({
+            "status": "NOT_VALIDATED",
+            "validate_only": true,
+            "validated_by_google": false,
+            "applied": false,
+            "message": "Google's recommendations:apply and recommendations:dismiss RPCs have \
+                        no validate-only mode in API v25, so nothing was sent to Google and \
+                        nothing changed. Only the local checks ran (resource names, \
+                        apply_parameters). The plan is kept: call confirm_and_apply with the \
+                        same plan_id and dry_run=false to apply it.",
+        }),
+        Err(e) => {
+            let _ = audit::log_mutation(&audit::MutationLogEntry {
+                log_file: &log_file,
+                operation: &plan.operation,
+                customer_id: &plan.customer_id,
+                entity_type: &plan.entity_type,
+                entity_id: &plan.entity_id,
+                changes: &plan.changes,
+                dry_run: true,
+                result: "VALIDATION_FAILED",
+                error: &e.to_string(),
+            });
+            return Err(e);
+        }
+    };
+
+    out["plan_id"] = json!(plan_id);
+    out["operation"] = json!(plan.operation);
+    out["entity_type"] = json!(plan.entity_type);
+    out["entity_id"] = json!(plan.entity_id);
+    out["customer_id"] = json!(plan.customer_id);
+    out["mutate_operations_count"] = json!(plan.mutate_operations.len());
+    Ok(out)
 }
 
 /// Dispatch the plan to the correct Google Ads RPC and shape the response.
@@ -110,8 +270,9 @@ async fn apply_plan(
 
     let dispatch_result = match &plan.dispatch {
         PlanDispatch::MutateOperations => {
-            apply_mutate_operations(client, plan, exempt_policy_violations).await
+            apply_mutate_operations(client, plan, exempt_policy_violations, false).await
         }
+        PlanDispatch::CustomAudiences => apply_custom_audiences(client, plan).await,
         PlanDispatch::ApplyRecommendation {
             resource_names,
             apply_parameters,
@@ -213,15 +374,22 @@ fn finish_mutate(
     Ok(out)
 }
 
+/// Send a `googleAds:mutate` plan, with the opt-in policy-exemption retry.
+///
+/// `validate_only` is passed to both the first request and the exemption
+/// retry, so a validate-only run also tells whether the exemptions would be
+/// accepted — without writing anything.
 async fn apply_mutate_operations(
     client: &GoogleAdsClient,
     plan: &ChangePlan,
     exempt_policy_violations: bool,
+    validate_only: bool,
 ) -> Result<serde_json::Value> {
     let first_error = match client
-        .mutate(
+        .mutate_with_options(
             &plan.customer_id,
             to_mutate_operations(&plan.mutate_operations),
+            validate_only,
         )
         .await
     {
@@ -275,12 +443,41 @@ async fn apply_mutate_operations(
     }
 
     let response = client
-        .mutate(
+        .mutate_with_options(
             &plan.customer_id,
             to_mutate_operations(&exemption.operations),
+            validate_only,
         )
         .await?;
     finish_mutate(response, Some(&exemption.exempted))
+}
+
+/// Send a custom audience plan to `customAudiences:mutate`.
+///
+/// The response carries each new audience's resource name; the trailing ID is
+/// lifted into `custom_segment_ids` because it is what the next step,
+/// `add_ad_group_custom_segments`, takes.
+async fn apply_custom_audiences(
+    client: &GoogleAdsClient,
+    plan: &ChangePlan,
+) -> Result<serde_json::Value> {
+    let response = client
+        .mutate_custom_audiences(&plan.customer_id, plan.mutate_operations.clone(), false)
+        .await?;
+
+    let ids: Vec<String> = response
+        .results
+        .iter()
+        .filter_map(|r| r.get("resourceName").and_then(|n| n.as_str()))
+        .filter_map(|name| name.rsplit('/').next())
+        .map(str::to_string)
+        .collect();
+
+    Ok(json!({
+        "status": "APPLIED",
+        "results": response.results,
+        "custom_segment_ids": ids,
+    }))
 }
 
 async fn apply_recommendation_dispatch(
