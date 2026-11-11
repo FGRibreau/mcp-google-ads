@@ -217,13 +217,18 @@ fn validate_composite_id(field: &str, id: &str) -> Result<String> {
 
 /// Set the status of many campaigns, ad groups, ads and keywords in one
 /// atomic mutate: every status changes, or none does.
+///
+/// `single_name` is the one-entity tool for the same change. A block on it in
+/// `blocked_operations` blocks the batch too, so the batch is no way around it.
 fn set_entities_status(
     config: &Config,
     customer_id: &str,
     ids: &EntityIds,
     status: &str,
     operation_name: &str,
+    single_name: &str,
 ) -> Result<serde_json::Value> {
+    check_blocked_operation(single_name, &config.safety)?;
     check_blocked_operation(operation_name, &config.safety)?;
     let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
 
@@ -298,7 +303,14 @@ pub fn enable_entities(
     customer_id: &str,
     ids: &EntityIds,
 ) -> Result<serde_json::Value> {
-    set_entities_status(config, customer_id, ids, "ENABLED", "enable_entities")
+    set_entities_status(
+        config,
+        customer_id,
+        ids,
+        "ENABLED",
+        "enable_entities",
+        "enable_entity",
+    )
 }
 
 /// Pause many campaigns, ad groups, ads and keywords at once.
@@ -307,7 +319,14 @@ pub fn pause_entities(
     customer_id: &str,
     ids: &EntityIds,
 ) -> Result<serde_json::Value> {
-    set_entities_status(config, customer_id, ids, "PAUSED", "pause_entities")
+    set_entities_status(
+        config,
+        customer_id,
+        ids,
+        "PAUSED",
+        "pause_entities",
+        "pause_entity",
+    )
 }
 
 #[cfg(test)]
@@ -536,5 +555,26 @@ mod tests {
         .unwrap_err()
         .to_string()
         .contains("blocked"));
+    }
+
+    #[test]
+    fn test_single_entity_block_also_blocks_the_batch() {
+        let campaigns = strings(&["1"]);
+        let ids = EntityIds {
+            campaign_ids: &campaigns,
+            ..Default::default()
+        };
+
+        let mut config = Config::default();
+        config.safety.blocked_operations = vec!["enable_entity".to_string()];
+        let err = enable_entities(&config, "123-456-7890", &ids).unwrap_err();
+        assert!(err.to_string().contains("blocked"), "{err}");
+        assert!(pause_entities(&config, "123-456-7890", &ids).is_ok());
+
+        let mut config = Config::default();
+        config.safety.blocked_operations = vec!["pause_entity".to_string()];
+        let err = pause_entities(&config, "123-456-7890", &ids).unwrap_err();
+        assert!(err.to_string().contains("blocked"), "{err}");
+        assert!(enable_entities(&config, "123-456-7890", &ids).is_ok());
     }
 }

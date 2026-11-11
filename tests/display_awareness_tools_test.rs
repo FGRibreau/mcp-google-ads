@@ -975,6 +975,26 @@ fn batch_upload_refuses_a_bad_batch_before_any_plan() {
     std::fs::remove_file(good).ok();
 }
 
+#[test]
+fn a_block_on_the_single_upload_also_blocks_the_batch() {
+    let path = temp_file("zip", &zip_bytes("blocked"));
+    let mut config = Config::default();
+    config.safety.blocked_operations = vec!["upload_display_ad".to_string()];
+    let files = [upload_file(path.to_str().unwrap(), "a", None)];
+    let err = display_ads::upload_display_ads(&display_ads::UploadDisplayAdsParams {
+        config: &config,
+        customer_id: "123-456-7890",
+        ad_group_ids: &strings(&["111"]),
+        files: &files,
+        ad_type: DisplayAdType::Html5,
+        final_url: "https://www.example.com/",
+        status: None,
+    })
+    .unwrap_err();
+    assert!(err.to_string().contains("blocked"), "{err}");
+    std::fs::remove_file(path).ok();
+}
+
 // ── MCP parameter structs ──────────────────────────────────────────────────
 
 #[test]

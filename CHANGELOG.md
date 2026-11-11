@@ -113,6 +113,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   time, and a half-enabled campaign if one failed halfway. Ads and keywords
   take their composite `adGroupId~id`; at most 500 entities per plan.
 
+  A batch tool is no way around a block: `blocked_operations` with
+  `enable_entity`, `pause_entity` or `upload_display_ad` also blocks
+  `enable_entities`, `pause_entities` or `upload_display_ads`.
+
   `create_custom_conversion_goal` and `set_campaign_custom_conversion_goal`
   make one campaign bid on chosen conversion actions — secondary ones too —
   without touching the account defaults or other campaigns. A campaign

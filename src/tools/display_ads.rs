@@ -491,6 +491,8 @@ pub const MAX_BATCH_FILES: usize = 10;
 /// …), and one ad in every ad group, all referring to that asset. The same
 /// checks as [`upload_display_ad`] run on every file before a plan exists.
 pub fn upload_display_ads(params: &UploadDisplayAdsParams) -> Result<serde_json::Value> {
+    // A block on the single upload blocks the batch too.
+    check_blocked_operation("upload_display_ad", &params.config.safety)?;
     check_blocked_operation("upload_display_ads", &params.config.safety)?;
 
     let ad_group_ids = validate_id_list(
