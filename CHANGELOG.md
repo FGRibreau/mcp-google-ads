@@ -106,6 +106,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single-upload checks before a plan exists, ad names must be unique, and one
   bad file refuses the whole batch.
 
+  `enable_entities` and `pause_entities` change the status of many campaigns,
+  ad groups, ads and keywords in one atomic mutate — every status changes, or
+  none does. Going live with a Display campaign meant enabling the campaign,
+  its ad groups and a hundred uploaded ads: two hundred calls one entity at a
+  time, and a half-enabled campaign if one failed halfway. Ads and keywords
+  take their composite `adGroupId~id`; at most 500 entities per plan.
+
   `create_custom_conversion_goal` and `set_campaign_custom_conversion_goal`
   make one campaign bid on chosen conversion actions — secondary ones too —
   without touching the account defaults or other campaigns. A campaign

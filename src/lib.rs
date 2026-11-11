@@ -452,6 +452,33 @@ pub struct EntityActionParams {
     pub entity_id: String,
 }
 
+/// Parameters for enabling or pausing many entities at once.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EntitiesStatusToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Campaign IDs.
+    pub campaign_ids: Option<Vec<String>>,
+    /// Ad group IDs.
+    pub ad_group_ids: Option<Vec<String>>,
+    /// Ads as `adGroupId~adId`, the tail of an adGroupAd resource name.
+    pub ad_ids: Option<Vec<String>>,
+    /// Keywords as `adGroupId~criterionId`, the tail of an adGroupCriterion
+    /// resource name.
+    pub keyword_ids: Option<Vec<String>>,
+}
+
+/// The entity lists of a batch status change; absent lists are empty.
+fn entity_ids(params: &EntitiesStatusToolParams) -> tools::entity_lifecycle::EntityIds<'_> {
+    tools::entity_lifecycle::EntityIds {
+        campaign_ids: params.campaign_ids.as_deref().unwrap_or_default(),
+        ad_group_ids: params.ad_group_ids.as_deref().unwrap_or_default(),
+        ad_ids: params.ad_ids.as_deref().unwrap_or_default(),
+        keyword_ids: params.keyword_ids.as_deref().unwrap_or_default(),
+    }
+}
+
 /// Parameters for confirming and applying a change plan.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -2060,6 +2087,42 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
+        description = "Draft enabling many paused campaigns, ad groups, ads and keywords in one atomic mutate (every status changes, or none does) — e.g. a whole campaign with its ad groups and ads at once. Ads are 'adGroupId~adId' and keywords 'adGroupId~criterionId', the tails of their resource names. At most 500 per plan; repeats are dropped. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn enable_entities(
+        &self,
+        Parameters(params): Parameters<EntitiesStatusToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        match tools::entity_lifecycle::enable_entities(&config, &cid, &entity_ids(&params)) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Draft pausing many campaigns, ad groups, ads and keywords in one atomic mutate (every status changes, or none does) — e.g. every ad of one message across ad groups. Ads are 'adGroupId~adId' and keywords 'adGroupId~criterionId', the tails of their resource names. At most 500 per plan; repeats are dropped. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn pause_entities(
+        &self,
+        Parameters(params): Parameters<EntitiesStatusToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        match tools::entity_lifecycle::pause_entities(&config, &cid, &entity_ids(&params)) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
         description = "Draft REMOVING an entity (IRREVERSIBLE). Use pause_entity instead if temporary."
     )]
     async fn remove_entity(&self, Parameters(params): Parameters<EntityActionParams>) -> String {
@@ -3276,6 +3339,8 @@ mod tests {
             "set_campaign_conversion_goals",
             "upload_display_ad",
             "upload_display_ads",
+            "enable_entities",
+            "pause_entities",
         ] {
             assert!(
                 names.iter().any(|n| n == expected),
@@ -3284,8 +3349,8 @@ mod tests {
             );
         }
         assert!(
-            names.len() >= 78,
-            "67 tools before the Display awareness tools + 11 new ones, got {}",
+            names.len() >= 80,
+            "67 tools before the Display awareness tools + 13 new ones, got {}",
             names.len()
         );
     }

@@ -89,7 +89,7 @@ An MCP server that gives Claude full read + write access to Google Ads accounts 
 
 ## Features
 
-- **78 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, Display remarketing (ad group audiences, exclusions, frequency caps, placement exclusions), Display awareness (custom segments, interests, placements, account exclusions, device modifiers, uploaded HTML5/image ads, per-campaign conversion goals), bidding, scheduling, keyword planner, conversions, geo targeting, policy
+- **80 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, Display remarketing (ad group audiences, exclusions, frequency caps, placement exclusions), Display awareness (custom segments, interests, placements, account exclusions, device modifiers, uploaded HTML5/image ads, per-campaign conversion goals), bidding, scheduling, keyword planner, conversions, geo targeting, policy
 - **Two-step safety** - All mutations return a preview; nothing executes until you confirm
 - **Budget guardrails** - Configurable daily budget cap, bid increase limits, broad+manual CPC blocker
 - **Audit logging** - Every mutation logged to a local JSON file with timestamp and dry-run status
@@ -183,7 +183,7 @@ All configuration is via environment variables. No config files.
 | `get_policy_issues` | Disapproved or limited ads and policy violations |
 | `get_conversion_actions` | Conversion actions configured in the account |
 
-### Write (54 tools)
+### Write (56 tools)
 
 All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` to execute.
 
@@ -241,6 +241,8 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `dismiss_recommendation` | Dismiss a recommendation |
 | `pause_entity` | Pause campaign/ad group/ad/keyword |
 | `enable_entity` | Enable paused entity |
+| `pause_entities` | Pause many campaigns, ad groups, ads (`adGroupId~adId`) and keywords (`adGroupId~criterionId`) in one atomic mutate; at most 500 per plan |
+| `enable_entities` | Enable many paused campaigns, ad groups, ads and keywords in one atomic mutate, e.g. a campaign with its ad groups and ads at once |
 | `remove_entity` | Permanently remove entity (destructive) |
 | `confirm_and_apply` | Execute a previewed change (dry_run=true default). `validate_only: true` sends the plan with `validateOnly` — Google validates it, nothing changes, the plan is kept |
 
