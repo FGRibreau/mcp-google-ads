@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limits, and image dimensions against the standard sizes (a warning). The
   preview shows the size and SHA-256, never the base64.
 
+  `upload_display_ads` does the same for a set of creatives: up to 10 files,
+  each one asset, and one ad per file in every named ad group, all in one
+  atomic mutate (assets first, temporary names `-1`, `-2`, …). A creative set
+  in five sizes across four ad groups is one plan instead of twenty. A file
+  can carry its own final URL, for per-size UTM tags. Every file passes the
+  single-upload checks before a plan exists, ad names must be unique, and one
+  bad file refuses the whole batch.
+
   `create_custom_conversion_goal` and `set_campaign_custom_conversion_goal`
   make one campaign bid on chosen conversion actions — secondary ones too —
   without touching the account defaults or other campaigns. A campaign

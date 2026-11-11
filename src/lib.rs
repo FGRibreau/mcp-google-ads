@@ -823,6 +823,38 @@ pub struct UploadDisplayAdToolParams {
     pub status: Option<models::AdStatus>,
 }
 
+/// One file of a batch display-ad upload.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UploadFileToolParams {
+    /// Absolute path of the file (or starting with `~/`).
+    pub file_path: String,
+    /// Name of the ad and its asset in Google Ads; unique within the batch.
+    pub ad_name: String,
+    /// This file's own landing page (e.g. with its own UTM tags). Defaults to
+    /// the batch's `final_url`.
+    pub final_url: Option<String>,
+}
+
+/// Parameters for uploading several display ads into several ad groups.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UploadDisplayAdsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The (Display) ad groups that each get every file as an ad.
+    pub ad_group_ids: Vec<String>,
+    /// The files, at most 10: .zip files for HTML5 (max 600 KB each), or
+    /// .jpg/.jpeg/.png/.gif for IMAGE (max 150 KB each).
+    pub files: Vec<UploadFileToolParams>,
+    /// `HTML5` or `IMAGE`, for every file.
+    pub ad_type: models::DisplayAdType,
+    /// Landing page for every file without its own, absolute http(s) URL.
+    pub final_url: String,
+    /// `PAUSED` (default) or `ENABLED`.
+    pub status: Option<models::AdStatus>,
+}
+
 /// Parameters for creating a portfolio bidding strategy.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -2436,6 +2468,42 @@ impl GoogleAdsMcp {
         }
     }
 
+    #[tool(
+        description = "Upload several local files as display ads into several ad groups in one atomic mutate: every file becomes one asset (MEDIA_BUNDLE for ad_type=HTML5, IMAGE for ad_type=IMAGE) and one ad in every ad group, all referring to that asset. At most 10 files per batch. Each file is checked like upload_display_ad (absolute path, extension, size, content; image sizes as a warning); ad_name must be unique within the batch. final_url applies to every file without its own final_url (use a file's own for per-file UTM tags). The preview shows sizes and SHA-256, never file content. status defaults to PAUSED. Run confirm_and_apply with validate_only=true first. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn upload_display_ads(
+        &self,
+        Parameters(params): Parameters<UploadDisplayAdsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        let files: Vec<tools::display_ads::UploadFile> = params
+            .files
+            .iter()
+            .map(|f| tools::display_ads::UploadFile {
+                file_path: &f.file_path,
+                ad_name: &f.ad_name,
+                final_url: f.final_url.as_deref(),
+            })
+            .collect();
+
+        match tools::display_ads::upload_display_ads(&tools::display_ads::UploadDisplayAdsParams {
+            config: &config,
+            customer_id: &cid,
+            ad_group_ids: &params.ad_group_ids,
+            files: &files,
+            ad_type: params.ad_type,
+            final_url: &params.final_url,
+            status: params.status,
+        }) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
     // ── Conversion goals ────────────────────────────────────────────────
 
     #[tool(
@@ -3207,6 +3275,7 @@ mod tests {
             "set_campaign_custom_conversion_goal",
             "set_campaign_conversion_goals",
             "upload_display_ad",
+            "upload_display_ads",
         ] {
             assert!(
                 names.iter().any(|n| n == expected),
@@ -3215,8 +3284,8 @@ mod tests {
             );
         }
         assert!(
-            names.len() >= 77,
-            "67 tools before the Display awareness tools + 10 new ones, got {}",
+            names.len() >= 78,
+            "67 tools before the Display awareness tools + 11 new ones, got {}",
             names.len()
         );
     }

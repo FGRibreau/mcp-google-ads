@@ -28,7 +28,7 @@ use crate::error::{McpGoogleAdsError, Result};
 use crate::models::{AdStatus, DisplayAdType, NextActionHint};
 use crate::safety::guards::{check_blocked_operation, validate_final_url};
 use crate::safety::preview::{store_plan, ChangePlan};
-use crate::tools::ids::validate_numeric_id;
+use crate::tools::ids::{check_fanout, validate_id_list, validate_numeric_id};
 use crate::tools::local_file::{
     base64_encode, image_dimensions, sha256_hex, sniff_format, FileFormat,
 };
@@ -212,6 +212,124 @@ fn display_url_from(final_url: &str) -> String {
         .to_string()
 }
 
+/// An image's dimensions, and a warning when they are missing or not one of
+/// Google's standard sizes (regional sizes exist, so this never refuses).
+fn image_check(bytes: &[u8]) -> (Option<(u32, u32)>, Option<String>) {
+    match image_dimensions(bytes) {
+        Some((w, h)) if !STANDARD_DISPLAY_AD_SIZES.contains(&(w, h)) => (
+            Some((w, h)),
+            Some(format!(
+                "{}x{} is not one of Google's standard image ad sizes (e.g. 300x250, \
+                 728x90, 160x600, 300x600, 320x50); Google may reject it as \
+                 UNEXPECTED_SIZE unless it is a regional size",
+                w, h
+            )),
+        ),
+        Some(dims) => (Some(dims), None),
+        None => (
+            None,
+            Some("could not read the image dimensions from the file header".to_string()),
+        ),
+    }
+}
+
+/// The asset to create for one uploaded file, and the ad that serves it.
+struct UploadParts {
+    asset_create: serde_json::Value,
+    ad: serde_json::Value,
+    asset_type: &'static str,
+    served_as: &'static str,
+    display_url: Option<String>,
+}
+
+/// Build the asset (at the temporary `asset_resource`) and the ad for one file.
+///
+/// Image ads also get `displayUrl`, the final URL's host: Google requires it
+/// there (fieldError REQUIRED on ad.display_url, confirmed with validateOnly
+/// against a live account on 2026-11-11). HTML5 upload ads validate without one.
+fn upload_parts(
+    ad_type: DisplayAdType,
+    asset_resource: &str,
+    ad_name: &str,
+    final_url: &str,
+    bytes: &[u8],
+) -> UploadParts {
+    let data = base64_encode(bytes);
+    let (asset_create, ad_field, ad_body, asset_type, served_as) = match ad_type {
+        DisplayAdType::Html5 => (
+            json!({
+                "resourceName": asset_resource,
+                "name": ad_name,
+                "type": "MEDIA_BUNDLE",
+                "mediaBundleAsset": { "data": data }
+            }),
+            "displayUploadAd",
+            json!({
+                "displayUploadProductType": "HTML5_UPLOAD_AD",
+                "mediaBundle": { "asset": asset_resource }
+            }),
+            "MEDIA_BUNDLE",
+            "displayUploadAd (HTML5_UPLOAD_AD)",
+        ),
+        DisplayAdType::Image => (
+            json!({
+                "resourceName": asset_resource,
+                "name": ad_name,
+                "type": "IMAGE",
+                "imageAsset": { "data": data }
+            }),
+            "imageAd",
+            json!({
+                "imageAsset": { "asset": asset_resource }
+            }),
+            "IMAGE",
+            "imageAd",
+        ),
+    };
+
+    let mut ad = json!({
+        "name": ad_name,
+        "finalUrls": [final_url],
+    });
+    ad[ad_field] = ad_body;
+    let display_url = match ad_type {
+        DisplayAdType::Image => {
+            let host = display_url_from(final_url);
+            ad["displayUrl"] = json!(host);
+            Some(host)
+        }
+        DisplayAdType::Html5 => None,
+    };
+
+    UploadParts {
+        asset_create,
+        ad,
+        asset_type,
+        served_as,
+        display_url,
+    }
+}
+
+/// What the preview shows of a file: never its bytes, only size and SHA-256.
+fn describe_file(
+    file: &CheckedFile,
+    ad_type: DisplayAdType,
+    dimensions: Option<(u32, u32)>,
+) -> serde_json::Value {
+    let mut summary = json!({
+        "path": file.path.display().to_string(),
+        "file_name": file.path.file_name().and_then(|n| n.to_str()).unwrap_or_default(),
+        "size_bytes": file.bytes.len(),
+        "max_bytes": ad_type.max_file_bytes(),
+        "sha256": sha256_hex(&file.bytes),
+        "detected_format": file.format.name(),
+    });
+    if let Some((w, h)) = dimensions {
+        summary["dimensions"] = json!(format!("{}x{}", w, h));
+    }
+    summary
+}
+
 pub fn upload_display_ad(params: &UploadDisplayAdParams) -> Result<serde_json::Value> {
     check_blocked_operation("upload_display_ad", &params.config.safety)?;
 
@@ -233,26 +351,12 @@ pub fn upload_display_ad(params: &UploadDisplayAdParams) -> Result<serde_json::V
     }
 
     let file = check_file(params.file_path, params.ad_type)?;
-    let size = file.bytes.len();
-    let sha256 = sha256_hex(&file.bytes);
 
     let mut warnings: Vec<String> = Vec::new();
     let dimensions = match params.ad_type {
         DisplayAdType::Image => {
-            let dims = image_dimensions(&file.bytes);
-            match dims {
-                Some((w, h)) if !STANDARD_DISPLAY_AD_SIZES.contains(&(w, h)) => {
-                    warnings.push(format!(
-                        "{}x{} is not one of Google's standard image ad sizes (e.g. 300x250, \
-                         728x90, 160x600, 300x600, 320x50); Google may reject it as \
-                         UNEXPECTED_SIZE unless it is a regional size",
-                        w, h
-                    ))
-                }
-                None => warnings
-                    .push("could not read the image dimensions from the file header".to_string()),
-                _ => {}
-            }
+            let (dims, warning) = image_check(&file.bytes);
+            warnings.extend(warning);
             dims
         }
         DisplayAdType::Html5 => None,
@@ -260,58 +364,19 @@ pub fn upload_display_ad(params: &UploadDisplayAdParams) -> Result<serde_json::V
 
     let cid = GoogleAdsClient::normalize_customer_id(params.customer_id);
     let asset_resource = format!("customers/{}/assets/-1", cid);
-    let data = base64_encode(&file.bytes);
-
-    let (asset_create, ad_body, asset_type, served_as) = match params.ad_type {
-        DisplayAdType::Html5 => (
-            json!({
-                "resourceName": asset_resource,
-                "name": ad_name,
-                "type": "MEDIA_BUNDLE",
-                "mediaBundleAsset": { "data": data }
-            }),
-            json!({
-                "displayUploadProductType": "HTML5_UPLOAD_AD",
-                "mediaBundle": { "asset": asset_resource }
-            }),
-            "MEDIA_BUNDLE",
-            "displayUploadAd (HTML5_UPLOAD_AD)",
-        ),
-        DisplayAdType::Image => (
-            json!({
-                "resourceName": asset_resource,
-                "name": ad_name,
-                "type": "IMAGE",
-                "imageAsset": { "data": data }
-            }),
-            json!({
-                "imageAsset": { "asset": asset_resource }
-            }),
-            "IMAGE",
-            "imageAd",
-        ),
-    };
-    let ad_field = match params.ad_type {
-        DisplayAdType::Html5 => "displayUploadAd",
-        DisplayAdType::Image => "imageAd",
-    };
-
-    let mut ad = json!({
-        "name": ad_name,
-        "finalUrls": [final_url],
-    });
-    ad[ad_field] = ad_body;
-    // Image ads need a display URL (fieldError REQUIRED on ad.display_url,
-    // confirmed with validateOnly against a live account on 2026-11-11);
-    // HTML5 upload ads validate without one.
-    let display_url = match params.ad_type {
-        DisplayAdType::Image => {
-            let host = display_url_from(final_url);
-            ad["displayUrl"] = json!(host);
-            Some(host)
-        }
-        DisplayAdType::Html5 => None,
-    };
+    let UploadParts {
+        asset_create,
+        ad,
+        asset_type,
+        served_as,
+        display_url,
+    } = upload_parts(
+        params.ad_type,
+        &asset_resource,
+        ad_name,
+        final_url,
+        &file.bytes,
+    );
 
     let operations = vec![
         json!({ "assetOperation": { "create": asset_create } }),
@@ -326,17 +391,7 @@ pub fn upload_display_ad(params: &UploadDisplayAdParams) -> Result<serde_json::V
         }),
     ];
 
-    let mut file_summary = json!({
-        "path": file.path.display().to_string(),
-        "file_name": file.path.file_name().and_then(|n| n.to_str()).unwrap_or_default(),
-        "size_bytes": size,
-        "max_bytes": params.ad_type.max_file_bytes(),
-        "sha256": sha256,
-        "detected_format": file.format.name(),
-    });
-    if let Some((w, h)) = dimensions {
-        file_summary["dimensions"] = json!(format!("{}x{}", w, h));
-    }
+    let file_summary = describe_file(&file, params.ad_type, dimensions);
 
     let mut changes = json!({
         "ad_group_id": ad_group_id,
@@ -397,6 +452,195 @@ pub fn upload_display_ad(params: &UploadDisplayAdParams) -> Result<serde_json::V
             ),
         });
     }
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
+/// One file of a batch upload: it becomes one asset, and one ad in every ad group.
+pub struct UploadFile<'a> {
+    /// Absolute path to the file (a leading `~/` is expanded).
+    pub file_path: &'a str,
+    /// Name for the ad and its asset; unique within the batch.
+    pub ad_name: &'a str,
+    /// This file's own final URL (e.g. its own UTM tags); `None` -> the
+    /// batch's `final_url`.
+    pub final_url: Option<&'a str>,
+}
+
+/// Parameters for [`upload_display_ads`].
+pub struct UploadDisplayAdsParams<'a> {
+    pub config: &'a Config,
+    pub customer_id: &'a str,
+    /// The Display ad groups that each get every file as an ad.
+    pub ad_group_ids: &'a [String],
+    pub files: &'a [UploadFile<'a>],
+    pub ad_type: DisplayAdType,
+    pub final_url: &'a str,
+    /// `None` -> `PAUSED`.
+    pub status: Option<AdStatus>,
+}
+
+/// At most this many files in one batch upload. With the per-file limits that
+/// keeps a request under 6 MB of files (8 MB as base64).
+pub const MAX_BATCH_FILES: usize = 10;
+
+/// Upload several files as display ads into several ad groups in one atomic
+/// mutate: every file becomes one asset (temporary resource names `-1`, `-2`,
+/// …), and one ad in every ad group, all referring to that asset. The same
+/// checks as [`upload_display_ad`] run on every file before a plan exists.
+pub fn upload_display_ads(params: &UploadDisplayAdsParams) -> Result<serde_json::Value> {
+    check_blocked_operation("upload_display_ads", &params.config.safety)?;
+
+    let ad_group_ids = validate_id_list(
+        "ad_group_ids",
+        "ad_group_id",
+        params.ad_group_ids,
+        "pass the Display ad groups that each get every file as an ad",
+    )?;
+    if params.files.is_empty() {
+        return Err(McpGoogleAdsError::Validation(
+            "files must not be empty — pass at least one {file_path, ad_name}".to_string(),
+        ));
+    }
+    if params.files.len() > MAX_BATCH_FILES {
+        return Err(McpGoogleAdsError::Validation(format!(
+            "{} files, over the {} per batch — split the upload into smaller batches",
+            params.files.len(),
+            MAX_BATCH_FILES
+        )));
+    }
+    check_fanout(ad_group_ids.len(), params.files.len(), "files")?;
+    validate_final_url(params.final_url)?;
+    let final_url = params.final_url.trim();
+    let status = params.status.unwrap_or_default();
+    if status == AdStatus::Removed {
+        return Err(McpGoogleAdsError::Validation(
+            "status REMOVED makes no sense for a new ad — use PAUSED (default) or ENABLED"
+                .to_string(),
+        ));
+    }
+
+    let cid = GoogleAdsClient::normalize_customer_id(params.customer_id);
+    let mut asset_operations = Vec::with_capacity(params.files.len());
+    let mut ad_operations = Vec::with_capacity(params.files.len() * ad_group_ids.len());
+    let mut files = Vec::with_capacity(params.files.len());
+    let mut warnings: Vec<String> = Vec::new();
+    let mut names = std::collections::HashSet::new();
+    let mut total_bytes = 0usize;
+    let mut kinds = ("", "");
+
+    for (index, upload) in params.files.iter().enumerate() {
+        let ad_name = upload.ad_name.trim();
+        if ad_name.is_empty() {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "files[{}].ad_name must not be empty — it names the ad and its asset",
+                index
+            )));
+        }
+        if !names.insert(ad_name.to_string()) {
+            return Err(McpGoogleAdsError::Validation(format!(
+                "two files share the ad_name '{}' — give each file its own name",
+                ad_name
+            )));
+        }
+
+        let file = check_file(upload.file_path, params.ad_type)?;
+        total_bytes += file.bytes.len();
+        let dimensions = match params.ad_type {
+            DisplayAdType::Image => {
+                let (dims, warning) = image_check(&file.bytes);
+                if let Some(warning) = warning {
+                    warnings.push(format!("{}: {}", ad_name, warning));
+                }
+                dims
+            }
+            DisplayAdType::Html5 => None,
+        };
+
+        let file_final_url = match upload.final_url {
+            Some(url) => {
+                validate_final_url(url)?;
+                url.trim()
+            }
+            None => final_url,
+        };
+        let asset_resource = format!("customers/{}/assets/-{}", cid, index + 1);
+        let parts = upload_parts(
+            params.ad_type,
+            &asset_resource,
+            ad_name,
+            file_final_url,
+            &file.bytes,
+        );
+        asset_operations.push(json!({ "assetOperation": { "create": parts.asset_create } }));
+        for ad_group_id in &ad_group_ids {
+            ad_operations.push(json!({
+                "adGroupAdOperation": {
+                    "create": {
+                        "adGroup": format!("customers/{}/adGroups/{}", cid, ad_group_id),
+                        "status": status.as_api_str(),
+                        "ad": parts.ad.clone()
+                    }
+                }
+            }));
+        }
+        kinds = (parts.asset_type, parts.served_as);
+
+        let mut summary = describe_file(&file, params.ad_type, dimensions);
+        summary["ad_name"] = json!(ad_name);
+        summary["final_url"] = json!(file_final_url);
+        if let Some(display_url) = parts.display_url {
+            summary["display_url"] = json!(display_url);
+        }
+        files.push(summary);
+    }
+
+    // Assets first: an ad can only refer to a temporary asset created earlier
+    // in the same request.
+    let total_assets = asset_operations.len();
+    let total_ads = ad_operations.len();
+    let operations: Vec<serde_json::Value> =
+        asset_operations.into_iter().chain(ad_operations).collect();
+
+    let mut changes = json!({
+        "ad_group_ids": ad_group_ids,
+        "ad_type": params.ad_type.as_api_str(),
+        "final_url": final_url,
+        "status": status.as_api_str(),
+        "files": files,
+        "total_assets": total_assets,
+        "total_ads": total_ads,
+        "total_bytes": total_bytes,
+        "creates": [
+            format!("{} asset(s) ({})", total_assets, kinds.0),
+            format!("{} ad_group_ad(s) ({})", total_ads, kinds.1),
+        ],
+        "note": "Every file becomes one asset, and one ad in every ad group, all in one atomic \
+                 mutate. After apply, each ad ID is the part after '~' in an adGroupAdResult \
+                 resourceName (customers/{cid}/adGroupAds/{ad_group_id}~{ad_id}).",
+    });
+    if params.ad_type == DisplayAdType::Html5 {
+        changes["eligibility"] = json!(
+            "HTML5 upload ads are only available to accounts Google has allowlisted. Run \
+             confirm_and_apply with validate_only=true first."
+        );
+    }
+    if !warnings.is_empty() {
+        changes["warnings"] = json!(warnings);
+    }
+
+    let plan = ChangePlan::new(
+        "upload_display_ads".to_string(),
+        "ad_group_ad".to_string(),
+        "new".to_string(),
+        cid,
+        changes,
+        false,
+        operations,
+    )
+    .with_status_after_apply(status);
 
     let preview = plan.to_preview();
     store_plan(plan);

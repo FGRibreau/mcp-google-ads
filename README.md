@@ -89,7 +89,7 @@ An MCP server that gives Claude full read + write access to Google Ads accounts 
 
 ## Features
 
-- **77 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, Display remarketing (ad group audiences, exclusions, frequency caps, placement exclusions), Display awareness (custom segments, interests, placements, account exclusions, device modifiers, uploaded HTML5/image ads, per-campaign conversion goals), bidding, scheduling, keyword planner, conversions, geo targeting, policy
+- **78 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, Display remarketing (ad group audiences, exclusions, frequency caps, placement exclusions), Display awareness (custom segments, interests, placements, account exclusions, device modifiers, uploaded HTML5/image ads, per-campaign conversion goals), bidding, scheduling, keyword planner, conversions, geo targeting, policy
 - **Two-step safety** - All mutations return a preview; nothing executes until you confirm
 - **Budget guardrails** - Configurable daily budget cap, bid increase limits, broad+manual CPC blocker
 - **Audit logging** - Every mutation logged to a local JSON file with timestamp and dry-run status
@@ -183,7 +183,7 @@ All configuration is via environment variables. No config files.
 | `get_policy_issues` | Disapproved or limited ads and policy violations |
 | `get_conversion_actions` | Conversion actions configured in the account |
 
-### Write (53 tools)
+### Write (54 tools)
 
 All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` to execute.
 
@@ -233,6 +233,7 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `add_ad_group_user_interests` | Add affinity / in-market segments (user interests, e.g. `92926`) to ad groups |
 | `set_campaign_device_modifiers` | Device bid modifiers (desktop, mobile, tablet, connected TV; `0` = excluded). Reads existing device criteria and updates or creates them |
 | `upload_display_ad` | Uploaded display ad from a local file in one atomic mutate: HTML5 ZIP (≤ 600 KB) as media bundle + `display_upload_ad`, or JPG/PNG/GIF (≤ 150 KB) as image asset + `image_ad`. Checked locally first; the preview shows size and SHA-256, not the content. Defaults to PAUSED. |
+| `upload_display_ads` | A set of up to 10 creatives into several ad groups in one atomic mutate: each file one asset, and one ad per file in every ad group. Same local checks as `upload_display_ad`; a file may carry its own final URL (per-size UTM tags). Defaults to PAUSED. |
 | `create_custom_conversion_goal` | A named set of conversion actions (primary or secondary) a campaign can bid on |
 | `set_campaign_custom_conversion_goal` | Make one campaign bid on a custom goal; `exclusive` (default) also switches its standard goals off, so it bids on those actions only. Account defaults and other campaigns are untouched |
 | `set_campaign_conversion_goals` | Set which category × origin goals one campaign bids on |

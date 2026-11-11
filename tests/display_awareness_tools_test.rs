@@ -25,6 +25,7 @@ use mcp_google_ads::{
     CreateCustomConversionGoalToolParams, CreateCustomSegmentToolParams,
     SetCampaignConversionGoalsToolParams, SetCampaignCustomConversionGoalToolParams,
     SetCampaignDeviceModifiersToolParams, UpdateAdGroupToolParams, UploadDisplayAdToolParams,
+    UploadDisplayAdsToolParams,
 };
 use serde_json::json;
 
@@ -749,6 +750,231 @@ fn non_standard_image_size_is_a_warning_not_a_refusal() {
     std::fs::remove_file(path).ok();
 }
 
+// ── Batch upload ───────────────────────────────────────────────────────────
+
+/// A small zip-like file whose content (and so its hash) depends on `seed`.
+fn zip_bytes(seed: &str) -> Vec<u8> {
+    [b"PK\x03\x04".as_slice(), seed.repeat(10).as_bytes()].concat()
+}
+
+fn upload_file<'a>(
+    file_path: &'a str,
+    ad_name: &'a str,
+    final_url: Option<&'a str>,
+) -> display_ads::UploadFile<'a> {
+    display_ads::UploadFile {
+        file_path,
+        ad_name,
+        final_url,
+    }
+}
+
+fn batch(
+    files: &[display_ads::UploadFile],
+    ad_group_ids: &[&str],
+    ad_type: DisplayAdType,
+    status: Option<AdStatus>,
+) -> mcp_google_ads::error::Result<serde_json::Value> {
+    let config = Config::default();
+    display_ads::upload_display_ads(&display_ads::UploadDisplayAdsParams {
+        config: &config,
+        customer_id: "123-456-7890",
+        ad_group_ids: &strings(ad_group_ids),
+        files,
+        ad_type,
+        final_url: "https://www.example.com/",
+        status,
+    })
+}
+
+#[test]
+fn batch_upload_creates_each_asset_once_and_an_ad_in_every_group() {
+    let first = temp_file("zip", &zip_bytes("promo-300x600"));
+    let second = temp_file("zip", &zip_bytes("promo-728x90"));
+    let tagged = "https://www.example.com/?utm_content=promo-728x90";
+    let padded = format!(" {tagged} ");
+    let files = [
+        upload_file(first.to_str().unwrap(), "Promo | 300x600", None),
+        upload_file(second.to_str().unwrap(), "Promo | 728x90", Some(&padded)),
+    ];
+    let preview = batch(&files, &["111", "222", "111"], DisplayAdType::Html5, None).expect("ok");
+    let preview_text = preview.to_string();
+
+    assert_eq!(preview["operation"], "upload_display_ads");
+    assert_eq!(preview["status_after_apply"], "PAUSED");
+    let changes = &preview["changes"];
+    assert_eq!(
+        changes["ad_group_ids"],
+        json!(["111", "222"]),
+        "repeats dropped"
+    );
+    assert_eq!(changes["total_assets"], 2);
+    assert_eq!(changes["total_ads"], 4);
+    assert_eq!(changes["files"][0]["ad_name"], "Promo | 300x600");
+    assert_eq!(changes["files"][0]["final_url"], "https://www.example.com/");
+    assert_eq!(
+        changes["files"][1]["final_url"], tagged,
+        "a file's own URL, trimmed"
+    );
+    assert!(changes["files"][1]["sha256"].is_string());
+    assert!(changes["eligibility"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("allowlisted"));
+
+    let plan = take_plan(&preview);
+    assert_whitelisted(&plan);
+    let ops = &plan.mutate_operations;
+    assert_eq!(ops.len(), 6, "2 assets, then 2 files × 2 ad groups");
+    // Assets first, each with its own temporary resource name.
+    for (i, op) in ops[..2].iter().enumerate() {
+        let asset = &op["assetOperation"]["create"];
+        assert_eq!(asset["type"], "MEDIA_BUNDLE");
+        assert_eq!(
+            asset["resourceName"],
+            format!("customers/1234567890/assets/-{}", i + 1)
+        );
+        assert_eq!(asset["name"], files[i].ad_name);
+        let data = asset["mediaBundleAsset"]["data"].as_str().expect("data");
+        assert!(
+            !preview_text.contains(data),
+            "the preview must not carry the file content"
+        );
+    }
+    let ads: Vec<_> = ops[2..]
+        .iter()
+        .map(|op| &op["adGroupAdOperation"]["create"])
+        .collect();
+    let routes: Vec<(&str, &str, &str)> = ads
+        .iter()
+        .map(|ad| {
+            (
+                ad["adGroup"].as_str().unwrap(),
+                ad["ad"]["displayUploadAd"]["mediaBundle"]["asset"]
+                    .as_str()
+                    .unwrap(),
+                ad["ad"]["finalUrls"][0].as_str().unwrap(),
+            )
+        })
+        .collect();
+    let (asset_1, asset_2) = (
+        "customers/1234567890/assets/-1",
+        "customers/1234567890/assets/-2",
+    );
+    let (group_111, group_222) = (
+        "customers/1234567890/adGroups/111",
+        "customers/1234567890/adGroups/222",
+    );
+    let home = "https://www.example.com/";
+    assert_eq!(
+        routes,
+        vec![
+            (group_111, asset_1, home),
+            (group_222, asset_1, home),
+            (group_111, asset_2, tagged),
+            (group_222, asset_2, tagged),
+        ]
+    );
+    assert!(ads.iter().all(|ad| ad["status"] == "PAUSED"));
+    assert!(
+        ads.iter().all(|ad| ad["ad"].get("displayUrl").is_none()),
+        "HTML5 upload ads need no display URL"
+    );
+    std::fs::remove_file(first).ok();
+    std::fs::remove_file(second).ok();
+}
+
+#[test]
+fn image_batch_gives_every_image_ad_its_display_url() {
+    let path = temp_file("png", &png_300x250());
+    let files = [upload_file(
+        path.to_str().unwrap(),
+        "Banner | 300x250",
+        Some("https://example.com/?utm_source=google"),
+    )];
+    let preview = batch(
+        &files,
+        &["111"],
+        DisplayAdType::Image,
+        Some(AdStatus::Enabled),
+    )
+    .expect("ok");
+    assert_eq!(preview["status_after_apply"], "ENABLED");
+    let file = &preview["changes"]["files"][0];
+    assert_eq!(file["display_url"], "example.com");
+    assert_eq!(file["dimensions"], "300x250");
+    assert!(preview["changes"].get("eligibility").is_none());
+
+    let plan = take_plan(&preview);
+    assert_whitelisted(&plan);
+    let ad = &plan.mutate_operations[1]["adGroupAdOperation"]["create"]["ad"];
+    assert_eq!(ad["displayUrl"], "example.com");
+    assert_eq!(
+        ad["imageAd"]["imageAsset"]["asset"],
+        "customers/1234567890/assets/-1"
+    );
+    std::fs::remove_file(path).ok();
+}
+
+#[test]
+fn batch_upload_refuses_a_bad_batch_before_any_plan() {
+    let good = temp_file("zip", &zip_bytes("ok"));
+    let good = good.to_str().unwrap().to_string();
+    let refuse = |files: &[display_ads::UploadFile], groups: &[&str], status| {
+        batch(files, groups, DisplayAdType::Html5, status)
+            .unwrap_err()
+            .to_string()
+    };
+
+    assert!(refuse(&[], &["111"], None).contains("files must not be empty"));
+    assert!(refuse(&[upload_file(&good, "a", None)], &[], None)
+        .contains("ad_group_ids must not be empty"));
+    let names: Vec<String> = (0..=display_ads::MAX_BATCH_FILES)
+        .map(|i| format!("ad {i}"))
+        .collect();
+    let many: Vec<_> = names
+        .iter()
+        .map(|name| upload_file(&good, name, None))
+        .collect();
+    assert!(refuse(&many, &["111"], None).contains("per batch"));
+    assert!(refuse(&[upload_file(&good, "  ", None)], &["111"], None)
+        .contains("ad_name must not be empty"));
+    assert!(refuse(
+        &[
+            upload_file(&good, "a", None),
+            upload_file(&good, " a ", None)
+        ],
+        &["111"],
+        None
+    )
+    .contains("share the ad_name"));
+    assert!(refuse(
+        &[upload_file(&good, "a", Some("www.example.com"))],
+        &["111"],
+        None
+    )
+    .contains("absolute"));
+    assert!(refuse(
+        &[upload_file(&good, "a", None)],
+        &["111"],
+        Some(AdStatus::Removed)
+    )
+    .contains("REMOVED"));
+    // One bad file refuses the whole batch.
+    let missing = std::env::temp_dir().join("mcp-google-ads-does-not-exist.zip");
+    assert!(batch(
+        &[
+            upload_file(&good, "a", None),
+            upload_file(missing.to_str().unwrap(), "b", None)
+        ],
+        &["111"],
+        DisplayAdType::Html5,
+        None
+    )
+    .is_err());
+    std::fs::remove_file(good).ok();
+}
+
 // ── MCP parameter structs ──────────────────────────────────────────────────
 
 #[test]
@@ -812,6 +1038,24 @@ fn tool_parameters_parse_as_an_mcp_host_sends_them() {
     }))
     .expect("upload payload");
     assert_eq!(upload.ad_type, DisplayAdType::Html5);
+
+    let uploads: UploadDisplayAdsToolParams = serde_json::from_value(json!({
+        "ad_group_ids": ["111", "222"],
+        "files": [
+            {"file_path": "/tmp/banner-300x600.zip", "ad_name": "Banner | 300x600"},
+            {
+                "file_path": "/tmp/banner-728x90.zip",
+                "ad_name": "Banner | 728x90",
+                "final_url": "https://www.example.com/?utm_content=banner-728x90"
+            }
+        ],
+        "ad_type": "HTML5",
+        "final_url": "https://www.example.com/"
+    }))
+    .expect("batch upload payload");
+    assert_eq!(uploads.files.len(), 2);
+    assert_eq!(uploads.files[0].final_url, None);
+    assert!(uploads.status.is_none(), "PAUSED is applied by the tool");
 
     let confirm: ConfirmApplyParams = serde_json::from_value(json!({
         "plan_id": "abc", "validate_only": true
@@ -912,6 +1156,22 @@ fn tool_parameters_reject_unknown_keys() {
             serde_json::from_value::<UploadDisplayAdToolParams>(json!({
                 "ad_group_id": "1", "file_path": "/x.zip", "ad_type": "HTML5",
                 "ad_name": "x", "final_url": "https://x.example", "image_base64": "..."
+            }))
+            .err(),
+        ),
+        (
+            "upload_display_ads",
+            serde_json::from_value::<UploadDisplayAdsToolParams>(json!({
+                "ad_group_ids": ["1"], "files": [], "ad_type": "HTML5",
+                "final_url": "https://x.example", "campaign_id": "2"
+            }))
+            .err(),
+        ),
+        (
+            "upload_display_ads (file)",
+            serde_json::from_value::<UploadDisplayAdsToolParams>(json!({
+                "ad_group_ids": ["1"], "ad_type": "HTML5", "final_url": "https://x.example",
+                "files": [{"file_path": "/x.zip", "ad_name": "x", "status": "PAUSED"}]
             }))
             .err(),
         ),
