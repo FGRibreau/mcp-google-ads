@@ -197,6 +197,21 @@ fn check_file(raw_path: &str, ad_type: DisplayAdType) -> Result<CheckedFile> {
 /// refused.
 ///
 /// Returns a [`ChangePlan`] preview to be confirmed via `confirm_and_apply`.
+/// The host of a final URL, as Google shows it on an image ad:
+/// `https://www.example.com/page?x=1` becomes `www.example.com`.
+fn display_url_from(final_url: &str) -> String {
+    let trimmed = final_url.trim();
+    let without_scheme = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+        .unwrap_or(trimmed);
+    without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(without_scheme)
+        .to_string()
+}
+
 pub fn upload_display_ad(params: &UploadDisplayAdParams) -> Result<serde_json::Value> {
     check_blocked_operation("upload_display_ad", &params.config.safety)?;
 
@@ -286,6 +301,17 @@ pub fn upload_display_ad(params: &UploadDisplayAdParams) -> Result<serde_json::V
         "finalUrls": [final_url],
     });
     ad[ad_field] = ad_body;
+    // Image ads need a display URL (fieldError REQUIRED on ad.display_url,
+    // confirmed with validateOnly against a live account on 2026-11-11);
+    // HTML5 upload ads validate without one.
+    let display_url = match params.ad_type {
+        DisplayAdType::Image => {
+            let host = display_url_from(final_url);
+            ad["displayUrl"] = json!(host);
+            Some(host)
+        }
+        DisplayAdType::Html5 => None,
+    };
 
     let operations = vec![
         json!({ "assetOperation": { "create": asset_create } }),
@@ -327,6 +353,9 @@ pub fn upload_display_ad(params: &UploadDisplayAdParams) -> Result<serde_json::V
                  is the part after '~' in the adGroupAdResult resourceName \
                  (customers/{cid}/adGroupAds/{ad_group_id}~{ad_id}).",
     });
+    if let Some(display_url) = &display_url {
+        changes["display_url"] = json!(display_url);
+    }
     if params.ad_type == DisplayAdType::Html5 {
         changes["eligibility"] = json!(
             "HTML5 upload ads are only available to accounts Google has allowlisted (open \

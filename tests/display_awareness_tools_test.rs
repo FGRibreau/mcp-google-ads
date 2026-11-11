@@ -270,7 +270,7 @@ fn account_exclusions_skip_what_exists_and_flag_caveats() {
     let config = Config::default();
     let existing = placements::AccountExclusions {
         placement_urls: strings(&["Example.com"]),
-        mobile_app_category_ids: strings(&["69500"]),
+        mobile_app_category_ids: strings(&["60008"]),
         mobile_app_ids: vec![],
         content_labels: vec![ContentLabelType::Tragedy],
     };
@@ -278,7 +278,7 @@ fn account_exclusions_skip_what_exists_and_flag_caveats() {
         &config,
         "123-456-7890",
         &strings(&["https://example.com/", "news.example.org"]),
-        &strings(&["69500"]),
+        &strings(&["60008"]),
         &strings(&["1-123456789"]),
         &[
             ContentLabelType::Tragedy,
@@ -333,14 +333,14 @@ fn account_exclusions_skip_what_exists_and_flag_caveats() {
 fn account_exclusions_with_nothing_new_create_no_plan() {
     let config = Config::default();
     let existing = placements::AccountExclusions {
-        mobile_app_category_ids: strings(&["69500"]),
+        mobile_app_category_ids: strings(&["60008"]),
         ..Default::default()
     };
     let answer = placements::add_account_exclusions(
         &config,
         "1234567890",
         &[],
-        &strings(&["mobileAppCategoryConstants/69500"]),
+        &strings(&["mobileAppCategoryConstants/60008"]),
         &[],
         &[],
         &existing,
@@ -348,6 +348,26 @@ fn account_exclusions_with_nothing_new_create_no_plan() {
     .expect("ok");
     assert_eq!(answer["status"], "NO_CHANGES");
     assert!(answer.get("plan_id").is_none());
+}
+
+#[test]
+fn account_exclusions_refuse_all_apps() {
+    // Google answers INVALID_MOBILE_APP_CATEGORY for 69500 at account level
+    // (validateOnly against a live account, 2026-11-11).
+    let config = Config::default();
+    let err = placements::add_account_exclusions(
+        &config,
+        "1234567890",
+        &[],
+        &strings(&["69500"]),
+        &[],
+        &[],
+        &placements::AccountExclusions::default(),
+    )
+    .expect_err("refused");
+    let message = err.to_string();
+    assert!(message.contains("69500"), "{message}");
+    assert!(message.contains("exclude_placements"), "{message}");
 }
 
 #[test]
@@ -620,6 +640,9 @@ fn image_ad_is_one_atomic_mutate_with_a_temporary_asset() {
         ad_group_ad["ad"]["imageAd"]["imageAsset"]["asset"],
         "customers/1234567890/assets/-1"
     );
+    // Google requires a display URL on image ads: the final URL's host.
+    assert_eq!(ad_group_ad["ad"]["displayUrl"], "example.com");
+    assert_eq!(preview["changes"]["display_url"], "example.com");
     std::fs::remove_file(path).ok();
 }
 

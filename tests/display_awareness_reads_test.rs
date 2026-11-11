@@ -34,7 +34,7 @@ async fn account_exclusions_are_read_and_matched() {
                 {"customerNegativeCriterion": {
                     "resourceName": "customers/1234567890/customerNegativeCriteria/2",
                     "type": "MOBILE_APP_CATEGORY",
-                    "mobileAppCategory": {"mobileAppCategoryConstant": "mobileAppCategoryConstants/69500"}}},
+                    "mobileAppCategory": {"mobileAppCategoryConstant": "mobileAppCategoryConstants/60008"}}},
                 {"customerNegativeCriterion": {
                     "resourceName": "customers/1234567890/customerNegativeCriteria/3",
                     "type": "MOBILE_APPLICATION", "mobileApplication": {"appId": "2-com.example.game"}}},
@@ -60,7 +60,7 @@ async fn account_exclusions_are_read_and_matched() {
         .await
         .contains("FROM customer_negative_criterion"));
     assert_eq!(existing.placement_urls, vec!["example.com"]);
-    assert_eq!(existing.mobile_app_category_ids, vec!["69500"]);
+    assert_eq!(existing.mobile_app_category_ids, vec!["60008"]);
     assert_eq!(existing.mobile_app_ids, vec!["2-com.example.game"]);
     assert_eq!(existing.content_labels, vec![ContentLabelType::Tragedy]);
 
@@ -69,7 +69,7 @@ async fn account_exclusions_are_read_and_matched() {
         &config,
         "1234567890",
         &["https://EXAMPLE.com".to_string()],
-        &["69500".to_string()],
+        &["60008".to_string()],
         &["2-com.example.game".to_string()],
         &[ContentLabelType::Tragedy, ContentLabelType::Juvenile],
         &existing,

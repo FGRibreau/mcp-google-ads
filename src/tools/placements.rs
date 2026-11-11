@@ -434,6 +434,24 @@ pub fn prepare_account_exclusions(
         content_labels: dedupe_preserving_order(content_labels),
     };
 
+    // Google rejects "All Apps" as an account-level exclusion
+    // (criterionError INVALID_MOBILE_APP_CATEGORY, confirmed with validateOnly
+    // against a live account on 2026-11-11); specific categories such as 60008
+    // are accepted. Refuse it here with the alternative instead of letting the
+    // whole atomic mutate fail.
+    if requested
+        .mobile_app_category_ids
+        .iter()
+        .any(|c| c == ALL_APPS_CATEGORY_ID)
+    {
+        return Err(McpGoogleAdsError::Validation(
+            "mobile app category 69500 ('All Apps') cannot be excluded at account level — \
+             Google rejects it there (INVALID_MOBILE_APP_CATEGORY). Exclude it per campaign \
+             with exclude_placements, or list specific app categories here (e.g. 60008 Games)"
+                .to_string(),
+        ));
+    }
+
     if requested.len() > MAX_CRITERIA_PER_PLAN {
         return Err(McpGoogleAdsError::Validation(format!(
             "plan would write {} exclusions, over the {} limit — split it into smaller batches",
@@ -633,16 +651,6 @@ pub fn build_account_exclusions_plan(
     });
     if !caveats.is_empty() {
         changes["content_label_caveats"] = json!(caveats);
-    }
-    if to_add
-        .mobile_app_category_ids
-        .iter()
-        .any(|c| c == ALL_APPS_CATEGORY_ID)
-    {
-        changes["app_note"] = json!(
-            "Category 69500 is 'All Apps': no campaign in the account serves on mobile app \
-             placements any more."
-        );
     }
 
     let plan = ChangePlan::new(

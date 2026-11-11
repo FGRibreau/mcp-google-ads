@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Found by running every new tool with `validate_only` against a live account:
+  - `add_account_exclusions` refuses mobile app category `69500` ("All Apps"):
+    Google rejects it at account level (`INVALID_MOBILE_APP_CATEGORY`), which
+    failed the whole atomic mutate. Specific categories such as `60008` are
+    accepted there; "All Apps" stays available per campaign through
+    `exclude_placements`.
+  - `upload_display_ad` with `ad_type: IMAGE` now sends `ad.displayUrl` (the
+    final URL's host). Google requires it on image ads (`fieldError REQUIRED`);
+    HTML5 upload ads validate without it.
+
 ### Added
 
 - Display remarketing could be read but not set up: the audience tools stopped

@@ -732,7 +732,9 @@ pub struct AddAccountExclusionsToolParams {
     pub customer_id: Option<String>,
     /// Websites to exclude across the account.
     pub placement_urls: Option<Vec<String>>,
-    /// Mobile app category constant IDs to exclude; `69500` is "All Apps".
+    /// Mobile app category constant IDs to exclude, e.g. `60008` (Games).
+    /// Google rejects `69500` ("All Apps") at account level; exclude that per
+    /// campaign with `exclude_placements`.
     pub mobile_app_category_ids: Option<Vec<String>>,
     /// Single apps to exclude: `1-<App Store id>` or `2-<package name>`.
     pub mobile_app_ids: Option<Vec<String>>,
@@ -2239,7 +2241,7 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Add account-level exclusions (CustomerNegativeCriterion) covering every campaign in the account: placement_urls (websites), mobile_app_category_ids (69500 = 'All Apps'), mobile_app_ids ('1-<App Store id>' / '2-<package name>') and content_label_types (v25 ContentLabelType). Reads the account's existing exclusions first and skips those, so the mutate does not fail on duplicates; if nothing new remains it answers NO_CHANGES without a plan. Content labels for Display: TRAGEDY, SOCIAL_ISSUES, PROFANITY, SEXUALLY_SUGGESTIVE, JUVENILE (sensitive content); VIDEO_RATING_DV_G/PG/T/MA and VIDEO_NOT_YET_RATED (digital content labels — excluding all five stops Display serving and is refused); EMBEDDED_VIDEO, LIVE_STREAMING_VIDEO, BELOW_THE_FOLD (Display only); BRAND_SUITABILITY_* themes. Deprecated or not for Display: PARKED_DOMAIN (Google removed the parked-domain setting on 10 Feb 2026), BRAND_SUITABILITY_HEALTH_SOURCE_UNDETERMINED (YouTube only), VIDEO (not in Google's current content suitability settings) — accepted, but flagged in the preview. Returns a preview — call confirm_and_apply to execute."
+        description = "Add account-level exclusions (CustomerNegativeCriterion) covering every campaign in the account: placement_urls (websites), mobile_app_category_ids (specific categories, e.g. 60008 Games — Google rejects 69500 'All Apps' at account level, so it is refused here; use exclude_placements per campaign for that), mobile_app_ids ('1-<App Store id>' / '2-<package name>') and content_label_types (v25 ContentLabelType). Reads the account's existing exclusions first and skips those, so the mutate does not fail on duplicates; if nothing new remains it answers NO_CHANGES without a plan. Content labels for Display: TRAGEDY, SOCIAL_ISSUES, PROFANITY, SEXUALLY_SUGGESTIVE, JUVENILE (sensitive content); VIDEO_RATING_DV_G/PG/T/MA and VIDEO_NOT_YET_RATED (digital content labels — excluding all five stops Display serving and is refused); EMBEDDED_VIDEO, LIVE_STREAMING_VIDEO, BELOW_THE_FOLD (Display only); BRAND_SUITABILITY_* themes. Deprecated or not for Display: PARKED_DOMAIN (Google removed the parked-domain setting on 10 Feb 2026), BRAND_SUITABILITY_HEALTH_SOURCE_UNDETERMINED (YouTube only), VIDEO (not in Google's current content suitability settings) — accepted, but flagged in the preview. Returns a preview — call confirm_and_apply to execute."
     )]
     async fn add_account_exclusions(
         &self,
@@ -2407,7 +2409,7 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Create an uploaded display ad from a local file in one atomic mutate: ad_type=HTML5 makes a MEDIA_BUNDLE asset from a .zip (max 600 KB) and an ad with display_upload_ad (HTML5_UPLOAD_AD); ad_type=IMAGE makes an IMAGE asset from a .jpg/.jpeg/.png/.gif (max 150 KB) and an image_ad. file_path must be absolute (or start with ~/); the file is checked locally first (exists, extension, size, content matches extension; image dimensions against Google's standard sizes, as a warning). The preview shows size and SHA-256, never the file content. status defaults to PAUSED. HTML5 upload ads only work for accounts Google has allowlisted — test with confirm_and_apply validate_only=true. Returns a preview — call confirm_and_apply to execute."
+        description = "Create an uploaded display ad from a local file in one atomic mutate: ad_type=HTML5 makes a MEDIA_BUNDLE asset from a .zip (max 600 KB) and an ad with display_upload_ad (HTML5_UPLOAD_AD); ad_type=IMAGE makes an IMAGE asset from a .jpg/.jpeg/.png/.gif (max 150 KB) and an image_ad. file_path must be absolute (or start with ~/); the file is checked locally first (exists, extension, size, content matches extension; image dimensions against Google's standard sizes, as a warning). The preview shows size and SHA-256, never the file content. IMAGE ads also get display_url = the final URL's host, which Google requires. status defaults to PAUSED. HTML5 upload ads only work for accounts Google has allowlisted — test with confirm_and_apply validate_only=true. Returns a preview — call confirm_and_apply to execute."
     )]
     async fn upload_display_ad(
         &self,
