@@ -89,7 +89,7 @@ An MCP server that gives Claude full read + write access to Google Ads accounts 
 
 ## Features
 
-- **63 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, bidding, scheduling, keyword planner, conversions, geo targeting, policy
+- **67 tools** - Campaign management, RSA ads, keywords, extensions, PMax, audiences, Display remarketing (ad group audiences, exclusions, frequency caps, placement exclusions), bidding, scheduling, keyword planner, conversions, geo targeting, policy
 - **Two-step safety** - All mutations return a preview; nothing executes until you confirm
 - **Budget guardrails** - Configurable daily budget cap, bid increase limits, broad+manual CPC blocker
 - **Audit logging** - Every mutation logged to a local JSON file with timestamp and dry-run status
@@ -183,7 +183,7 @@ All configuration is via environment variables. No config files.
 | `get_policy_issues` | Disapproved or limited ads and policy violations |
 | `get_conversion_actions` | Conversion actions configured in the account |
 
-### Write (39 tools)
+### Write (43 tools)
 
 All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` to execute.
 
@@ -196,8 +196,8 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `set_campaign_geo_target_type` | Set a campaign's geo target type (`PRESENCE` vs `PRESENCE_OR_INTEREST`) for positive and/or negative targeting |
 | `draft_responsive_search_ad` | Create RSA (3-15 headlines, 2-4 descriptions). Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
 | `update_responsive_search_ad` | Edit an existing RSA in place — headlines, descriptions, final URL, display paths. Only the fields provided are written; preserves the ad's ID and asset performance history, unlike remove + re-create. |
-| `create_ad_group` | Create ad group in existing campaign. Defaults to PAUSED; pass `status: "ENABLED"` to opt out. |
-| `update_ad_group` | Modify ad group name or CPC bid |
+| `create_ad_group` | Create ad group in existing campaign. Defaults to PAUSED; pass `status: "ENABLED"` to opt out. `ad_group_type` defaults to `SEARCH_STANDARD`; pass `DISPLAY_STANDARD` for a Display campaign. |
+| `update_ad_group` | Modify ad group name, CPC bid, ad rotation mode or optimized targeting (`optimized_targeting_enabled: false` keeps a Display ad group on its lists) |
 | `draft_keywords` | Add keywords with match types and optional per-keyword `final_url` (landing page override) |
 | `remove_keywords` | Remove keywords from ad group (destructive) |
 | `update_keyword_final_url` | Change an existing keyword's landing page in place (preserves quality score history, unlike remove + re-create) |
@@ -215,6 +215,8 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `remove_extension` | Remove a campaign extension (destructive) |
 | `create_pmax_campaign` | Performance Max campaign with text assets |
 | `add_audience_targeting` | Target audiences (TARGETING/OBSERVATION) |
+| `add_ad_group_audiences` | Add user lists to ad groups as positive audience criteria — what a Display remarketing ad group needs |
+| `exclude_audiences` | Exclude user lists (converters, customers) from a whole campaign or from specific ad groups |
 | `create_portfolio_bidding_strategy` | Portfolio bidding (CPA, ROAS, impression share) |
 | `create_conversion_action` | Create a conversion action for server-side click uploads (UPLOAD_CLICKS, gclid-based) |
 | `set_conversion_action_primary_status` | Mark a conversion action primary or secondary (demote a value-0 signup out of bidding) |
@@ -222,6 +224,8 @@ All write tools return a preview. Call `confirm_and_apply` with `dry_run=false` 
 | `upload_image_asset` | Upload base64-encoded image |
 | `upload_text_asset` | Create reusable text asset |
 | `set_campaign_schedule` | Ad scheduling / dayparting |
+| `set_campaign_frequency_caps` | Impression frequency caps per DAY/WEEK/MONTH for Display and Video campaigns (the list replaces existing caps) |
+| `exclude_placements` | Exclude websites, mobile app categories (`69500` = All Apps) and single apps from a campaign |
 | `apply_recommendation` | Apply a Google recommendation, optionally with type-specific `apply_parameters` |
 | `dismiss_recommendation` | Dismiss a recommendation |
 | `pause_entity` | Pause campaign/ad group/ad/keyword |

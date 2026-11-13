@@ -5,6 +5,61 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Display remarketing could be read but not set up: the audience tools stopped
+  at a positive list on a campaign, and nothing reached the settings that decide
+  whether a remarketing campaign actually stays on its lists. Four tools close
+  that gap, each a preview confirmed through `confirm_and_apply` like the rest.
+
+  `add_ad_group_audiences` writes user lists as positive criteria on ad groups,
+  one per ad group × list. A Display ad group's audience targeting lives on the
+  ad group, so a campaign-level criterion was the wrong place for it.
+
+  `exclude_audiences` writes NEGATIVE user list criteria, either on a campaign
+  (covering every ad group in it, including later ones) or on named ad groups.
+  Exactly one scope is accepted; passing both or neither is refused, because
+  either reading of the ambiguity would be a guess about who stops seeing ads.
+
+  `set_campaign_frequency_caps` sets `campaign.frequency_caps` — impressions
+  per user per DAY, WEEK or MONTH, at the CAMPAIGN, AD_GROUP or AD_GROUP_AD
+  level. The list replaces the existing caps under one field mask, as the API
+  treats the repeated field. An empty list is refused rather than read as
+  "clear every cap", and two caps for the same level and window are refused
+  instead of left for Google to resolve.
+
+  `exclude_placements` writes NEGATIVE campaign criteria for websites, mobile
+  app categories and single mobile apps. Category `69500` is "All Apps", so one
+  criterion keeps a campaign off app inventory, where accidental taps on games
+  tend to buy clicks that never convert. Website URLs are normalized
+  (`https://www.example.com/` and `www.example.com` are one placement), and app
+  IDs must be `1-<App Store id>` or `2-<package name>`.
+
+- `update_ad_group` takes `optimized_targeting_enabled`. Optimized targeting is
+  on by default for Display ad groups and serves beyond the targeted lists; on
+  a small remarketing list that means most impressions go to people who never
+  visited the site. Setting it to `false` keeps the ad group on its lists.
+
+- `create_ad_group` takes `ad_group_type` (`SEARCH_STANDARD`, the default and
+  the only type it could write before, or `DISPLAY_STANDARD`). A Display
+  campaign rejects a Search ad group, so the tool could not add an ad group to
+  one at all.
+
+### Changed
+
+- Library callers: `create_ad_group` and `update_ad_group` gain a trailing
+  `Option` parameter (`ad_group_type`, `optimized_targeting_enabled`). Pass
+  `None` to keep the previous behaviour. The MCP tool surface is unaffected:
+  both parameters are optional.
+
+- The ID validation and order-preserving dedupe that `exclude_demographics`
+  used moved to a shared module, so the new criterion tools refuse a resource
+  name or a display name in place of a numeric ID the same way, and collapse a
+  repeated ID before it becomes a duplicate operation Google would reject the
+  whole batch for.
+
 ## [0.13.0] - 2026-08-24
 
 ### Added
