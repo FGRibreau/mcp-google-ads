@@ -452,6 +452,33 @@ pub struct EntityActionParams {
     pub entity_id: String,
 }
 
+/// Parameters for enabling or pausing many entities at once.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EntitiesStatusToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Campaign IDs.
+    pub campaign_ids: Option<Vec<String>>,
+    /// Ad group IDs.
+    pub ad_group_ids: Option<Vec<String>>,
+    /// Ads as `adGroupId~adId`, the tail of an adGroupAd resource name.
+    pub ad_ids: Option<Vec<String>>,
+    /// Keywords as `adGroupId~criterionId`, the tail of an adGroupCriterion
+    /// resource name.
+    pub keyword_ids: Option<Vec<String>>,
+}
+
+/// The entity lists of a batch status change; absent lists are empty.
+fn entity_ids(params: &EntitiesStatusToolParams) -> tools::entity_lifecycle::EntityIds<'_> {
+    tools::entity_lifecycle::EntityIds {
+        campaign_ids: params.campaign_ids.as_deref().unwrap_or_default(),
+        ad_group_ids: params.ad_group_ids.as_deref().unwrap_or_default(),
+        ad_ids: params.ad_ids.as_deref().unwrap_or_default(),
+        keyword_ids: params.keyword_ids.as_deref().unwrap_or_default(),
+    }
+}
+
 /// Parameters for confirming and applying a change plan.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -476,6 +503,14 @@ pub struct ConfirmApplyParams {
     /// so you can retry with this flag. Only keywords can be exempted —
     /// responsive search ads cannot.
     pub exempt_policy_violations: Option<bool>,
+    /// Ask Google to validate the plan without applying it: the mutate is sent
+    /// with `validateOnly: true`, Google checks every operation exactly as for
+    /// a real apply, and nothing changes. Takes precedence over `dry_run`, is
+    /// allowed while `require_dry_run` is on, needs no `confirmed_twice`, and
+    /// keeps the plan so the same `plan_id` can be applied afterwards.
+    /// Recommendation plans cannot be validated this way (their RPCs have no
+    /// validate-only mode); they answer `NOT_VALIDATED` without sending.
+    pub validate_only: Option<bool>,
 }
 
 /// Parameters for creating a new ad group.
@@ -493,6 +528,9 @@ pub struct CreateAdGroupToolParams {
     /// Lifecycle status. Defaults to `PAUSED` for safety (was `ENABLED` in
     /// v0.2.x — corrected for consistency with the other write tools).
     pub status: Option<models::AdStatus>,
+    /// Ad group type: `SEARCH_STANDARD` (default) or `DISPLAY_STANDARD`. Must
+    /// match the campaign — a Display campaign needs `DISPLAY_STANDARD`.
+    pub ad_group_type: Option<models::AdGroupType>,
 }
 
 /// Parameters for updating an ad group.
@@ -510,6 +548,15 @@ pub struct UpdateAdGroupToolParams {
     /// Ad rotation mode: OPTIMIZE (serve best-performing ad) or
     /// ROTATE_FOREVER ("Rotate indefinitely" in the Google Ads UI).
     pub ad_rotation_mode: Option<models::AdRotationMode>,
+    /// Optimized targeting (Display). `false` keeps the ad group on its
+    /// targeted audiences; `true` (the Display default) lets Google serve
+    /// beyond them to people it predicts will convert.
+    pub optimized_targeting_enabled: Option<bool>,
+    /// How the ad group's audience segments (user lists, interests, custom
+    /// segments) act: `TARGETING` narrows reach to them, `OBSERVATION` only
+    /// reports and adjusts bids. Written as the AUDIENCE target restriction;
+    /// the restrictions of other dimensions are read first and kept.
+    pub audience_targeting_mode: Option<models::AudienceTargetingMode>,
 }
 
 /// Parameters for keyword discovery.
@@ -574,6 +621,265 @@ pub struct AddAudienceTargetingToolParams {
     pub audience_id: String,
     /// Targeting mode: TARGETING or OBSERVATION.
     pub targeting_mode: String,
+}
+
+/// Parameters for adding user lists to ad groups as positive criteria.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddAdGroupAudiencesToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Ad group IDs to add the lists to.
+    pub ad_group_ids: Vec<String>,
+    /// Numeric user list IDs, from
+    /// `run_gaql("SELECT user_list.id, user_list.name FROM user_list")`.
+    pub audience_ids: Vec<String>,
+}
+
+/// Parameters for excluding user lists from a campaign or ad groups.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExcludeAudiencesToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Exclude from the whole campaign (covers every ad group in it). Pass
+    /// this OR `ad_group_ids`.
+    pub campaign_id: Option<String>,
+    /// Exclude from these ad groups only. Pass this OR `campaign_id`.
+    pub ad_group_ids: Option<Vec<String>>,
+    /// Numeric user list IDs to exclude, e.g. converters and customers.
+    pub audience_ids: Vec<String>,
+}
+
+/// Parameters for setting a campaign's frequency caps.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetCampaignFrequencyCapsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID (Display or Video).
+    pub campaign_id: String,
+    /// Every cap the campaign should have — this list replaces the existing
+    /// caps. e.g. `[{"max_impressions": 3, "time_unit": "DAY"},
+    /// {"max_impressions": 10, "time_unit": "WEEK"}]`. `level` defaults to
+    /// CAMPAIGN.
+    pub frequency_caps: Vec<models::FrequencyCap>,
+}
+
+/// Parameters for excluding placements from a campaign.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExcludePlacementsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID to exclude the placements from.
+    pub campaign_id: String,
+    /// Websites to exclude, e.g. `["example.com"]`.
+    pub placement_urls: Option<Vec<String>>,
+    /// Mobile app category constant IDs to exclude. `69500` is "All Apps".
+    /// List them with `SELECT mobile_app_category_constant.id,
+    /// mobile_app_category_constant.name FROM mobile_app_category_constant`.
+    pub mobile_app_category_ids: Option<Vec<String>>,
+    /// Single mobile apps to exclude: `1-<App Store id>` (iOS) or
+    /// `2-<package name>` (Android).
+    pub mobile_app_ids: Option<Vec<String>>,
+}
+
+/// Parameters for creating a custom segment (API: custom audience).
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateCustomSegmentToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Segment name, unique among the account's custom segments.
+    pub name: String,
+    /// Optional description.
+    pub description: Option<String>,
+    /// `AUTO` (default: Google picks the interpretation) or `SEARCH` (people
+    /// who searched for these terms on Google). `INTEREST` and
+    /// `PURCHASE_INTENT` are not allowed for new segments in API v25.
+    pub segment_type: Option<models::CustomSegmentType>,
+    /// Keywords or phrases, each at most 10 words and 80 characters.
+    pub keywords: Option<Vec<String>>,
+    /// Web pages people read, with protocol, e.g. `https://example.com/page`.
+    pub urls: Option<Vec<String>>,
+    /// Android package names of apps people use, e.g. `com.example.app`.
+    pub apps: Option<Vec<String>>,
+}
+
+/// Parameters for adding custom segments to ad groups.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddAdGroupCustomSegmentsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Ad group IDs to add the segments to.
+    pub ad_group_ids: Vec<String>,
+    /// Numeric custom segment (custom audience) IDs, as returned by
+    /// `create_custom_segment` in `custom_segment_ids`.
+    pub custom_segment_ids: Vec<String>,
+}
+
+/// Parameters for adding user interests (affinity / in-market) to ad groups.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddAdGroupUserInterestsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Ad group IDs to add the interests to.
+    pub ad_group_ids: Vec<String>,
+    /// Numeric user interest IDs, e.g. `92926`, from `SELECT
+    /// user_interest.user_interest_id, user_interest.name FROM user_interest`.
+    pub user_interest_ids: Vec<String>,
+}
+
+/// Parameters for adding website placements to ad groups.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddAdGroupPlacementsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Ad group IDs the placements apply to.
+    pub ad_group_ids: Vec<String>,
+    /// Websites, e.g. `["news.example"]`. At most 250 characters each.
+    pub placement_urls: Option<Vec<String>>,
+    /// `false` (default): target these sites. `true`: exclude them from these
+    /// ad groups only.
+    pub negative: Option<bool>,
+    /// With `negative: true` only — single apps to exclude:
+    /// `1-<App Store id>` or `2-<package name>`.
+    pub mobile_app_ids: Option<Vec<String>>,
+}
+
+/// Parameters for adding account-level exclusions.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddAccountExclusionsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Websites to exclude across the account.
+    pub placement_urls: Option<Vec<String>>,
+    /// Mobile app category constant IDs to exclude, e.g. `60008` (Games).
+    /// Google rejects `69500` ("All Apps") at account level; exclude that per
+    /// campaign with `exclude_placements`.
+    pub mobile_app_category_ids: Option<Vec<String>>,
+    /// Single apps to exclude: `1-<App Store id>` or `2-<package name>`.
+    pub mobile_app_ids: Option<Vec<String>>,
+    /// Content labels to exclude (v25 ContentLabelType), e.g.
+    /// `["BELOW_THE_FOLD", "TRAGEDY", "VIDEO_RATING_DV_MA"]`.
+    pub content_label_types: Option<Vec<models::ContentLabelType>>,
+}
+
+/// Parameters for setting campaign device bid modifiers.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetCampaignDeviceModifiersToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID.
+    pub campaign_id: String,
+    /// Desktop modifier: 0 excludes (-100%), else 0.1 to 10.0 (1.2 = +20%).
+    pub desktop: Option<f64>,
+    /// Mobile modifier: 0 excludes (-100%), else 0.1 to 10.0.
+    pub mobile: Option<f64>,
+    /// Tablet modifier: 0 excludes (-100%), else 0.1 to 10.0.
+    pub tablet: Option<f64>,
+    /// Connected TV modifier: 0 excludes (-100%), else 0.1 to 10.0.
+    pub connected_tv: Option<f64>,
+}
+
+/// Parameters for creating a custom conversion goal.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateCustomConversionGoalToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// Goal name.
+    pub name: String,
+    /// Numeric conversion action IDs the goal bids on (primary or secondary).
+    pub conversion_action_ids: Vec<String>,
+}
+
+/// Parameters for making a campaign bid on a custom conversion goal.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetCampaignCustomConversionGoalToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID.
+    pub campaign_id: String,
+    /// Numeric custom conversion goal ID.
+    pub custom_conversion_goal_id: String,
+    /// `true` (default): also set every standard campaign conversion goal of
+    /// this campaign to not biddable, so it bids on the custom goal only.
+    /// `false`: keep the standard goals it bids on as well.
+    pub exclusive: Option<bool>,
+}
+
+/// Parameters for setting a campaign's standard conversion goals.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetCampaignConversionGoalsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The campaign ID.
+    pub campaign_id: String,
+    /// Goals to set, e.g. `[{"category": "SUBMIT_LEAD_FORM", "origin":
+    /// "WEBSITE", "biddable": true}]`.
+    pub goals: Vec<models::CampaignConversionGoalInput>,
+}
+
+/// Parameters for uploading a display ad from a local file.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UploadDisplayAdToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The (Display) ad group to create the ad in.
+    pub ad_group_id: String,
+    /// Absolute path of the file (or starting with `~/`): a .zip for HTML5
+    /// (max 600 KB), a .jpg/.jpeg/.png/.gif for IMAGE (max 150 KB).
+    pub file_path: String,
+    /// `HTML5` or `IMAGE`.
+    pub ad_type: models::DisplayAdType,
+    /// Name of the ad and its asset in Google Ads.
+    pub ad_name: String,
+    /// Landing page, absolute http(s) URL.
+    pub final_url: String,
+    /// `PAUSED` (default) or `ENABLED`.
+    pub status: Option<models::AdStatus>,
+}
+
+/// One file of a batch display-ad upload.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UploadFileToolParams {
+    /// Absolute path of the file (or starting with `~/`).
+    pub file_path: String,
+    /// Name of the ad and its asset in Google Ads; unique within the batch.
+    pub ad_name: String,
+    /// This file's own landing page (e.g. with its own UTM tags). Defaults to
+    /// the batch's `final_url`.
+    pub final_url: Option<String>,
+}
+
+/// Parameters for uploading several display ads into several ad groups.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UploadDisplayAdsToolParams {
+    /// Customer ID (e.g. 123-456-7890). Defaults to configured customer_id.
+    pub customer_id: Option<String>,
+    /// The (Display) ad groups that each get every file as an ad.
+    pub ad_group_ids: Vec<String>,
+    /// The files, at most 10: .zip files for HTML5 (max 600 KB each), or
+    /// .jpg/.jpeg/.png/.gif for IMAGE (max 150 KB each).
+    pub files: Vec<UploadFileToolParams>,
+    /// `HTML5` or `IMAGE`, for every file.
+    pub ad_type: models::DisplayAdType,
+    /// Landing page for every file without its own, absolute http(s) URL.
+    pub final_url: String,
+    /// `PAUSED` (default) or `ENABLED`.
+    pub status: Option<models::AdStatus>,
 }
 
 /// Parameters for creating a portfolio bidding strategy.
@@ -1009,7 +1315,7 @@ impl GoogleAdsMcp {
     // ── Ad Groups (write) ────────────────────────────────────────────────
 
     #[tool(
-        description = "Draft a new ad group in an existing campaign. Defaults to PAUSED — pass status='ENABLED' to start serving immediately. Returns a preview — call confirm_and_apply to execute."
+        description = "Draft a new ad group in an existing campaign. Defaults to PAUSED — pass status='ENABLED' to start serving immediately. ad_group_type defaults to SEARCH_STANDARD; pass DISPLAY_STANDARD for a Display campaign (the type must match the campaign). Returns a preview — call confirm_and_apply to execute."
     )]
     async fn create_ad_group(
         &self,
@@ -1027,6 +1333,7 @@ impl GoogleAdsMcp {
             &params.ad_group_name,
             params.cpc_bid_micros,
             params.status,
+            params.ad_group_type,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
@@ -1034,7 +1341,7 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Draft ad group updates (name, CPC bid, ad rotation mode). ad_rotation_mode=ROTATE_FOREVER is 'Rotate indefinitely' in the UI. Returns a preview — call confirm_and_apply to execute."
+        description = "Draft ad group updates (name, CPC bid, ad rotation mode, optimized targeting, audience targeting mode). ad_rotation_mode=ROTATE_FOREVER is 'Rotate indefinitely' in the UI. optimized_targeting_enabled=false keeps a Display ad group on its targeted audiences — with it on (the Display default) Google also serves to people outside the lists, so a remarketing ad group stops being remarketing. audience_targeting_mode=TARGETING makes the ad group's audience segments (user lists, interests, custom segments) narrow reach; OBSERVATION only reports on them and allows bid adjustments. It writes the AUDIENCE target restriction: the ad group's current restrictions are read first and every other dimension is kept. Returns a preview — call confirm_and_apply to execute."
     )]
     async fn update_ad_group(
         &self,
@@ -1045,6 +1352,41 @@ impl GoogleAdsMcp {
         }
         let cid = self.resolve_customer_id(params.customer_id.as_deref());
         let config = self.config.clone();
+
+        // The restriction list is replaced as a whole, so read it first and
+        // change only the AUDIENCE entry (see AudienceTargetingUpdate). A
+        // blocked operation never gets as far as the read.
+        let current_restrictions = match params.audience_targeting_mode {
+            Some(_) => {
+                if let Err(e) =
+                    safety::guards::check_blocked_operation("update_ad_group", &config.safety)
+                {
+                    return e.to_json().to_string();
+                }
+                let client = match GoogleAdsClient::new(&config) {
+                    Ok(c) => c,
+                    Err(e) => return e.to_json().to_string(),
+                };
+                match tools::ad_groups_write::fetch_ad_group_target_restrictions(
+                    &client,
+                    &cid,
+                    &params.ad_group_id,
+                )
+                .await
+                {
+                    Ok(restrictions) => restrictions,
+                    Err(e) => return error_response(&e).to_string(),
+                }
+            }
+            None => Vec::new(),
+        };
+        let audience_targeting = params.audience_targeting_mode.map(|mode| {
+            tools::ad_groups_write::AudienceTargetingUpdate {
+                mode,
+                current_restrictions: &current_restrictions,
+            }
+        });
+
         match tools::ad_groups_write::update_ad_group(
             &config,
             &cid,
@@ -1052,6 +1394,8 @@ impl GoogleAdsMcp {
             params.name.as_deref(),
             params.cpc_bid_micros,
             params.ad_rotation_mode,
+            params.optimized_targeting_enabled,
+            audience_targeting,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
@@ -1061,7 +1405,7 @@ impl GoogleAdsMcp {
     // ── Write tools ──────────────────────────────────────────────────────
 
     #[tool(
-        description = "Draft a new campaign (PAUSED) with budget, ad group, and optional keywords. Returns a preview — call confirm_and_apply to execute."
+        description = "Draft a new campaign (PAUSED) with budget, ad group, and optional keywords. channel_type SEARCH (default) or DISPLAY: a DISPLAY campaign is sent with only targetContentNetwork=true (no search-network settings) and its ad group as DISPLAY_STANDARD. bidding_strategy: MAXIMIZE_CONVERSIONS (optional target_cpa), TARGET_CPA (needs target_cpa), MAXIMIZE_CONVERSION_VALUE (optional target_roas), TARGET_ROAS (needs target_roas), MAXIMIZE_CLICKS / TARGET_SPEND, MANUAL_CPC; TARGET_IMPRESSION_SHARE and PERCENT_CPC are refused for DISPLAY, unknown strategies always. Returns a preview — call confirm_and_apply to execute."
     )]
     async fn draft_campaign(
         &self,
@@ -1212,7 +1556,7 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
-        description = "Draft keyword additions with match types (EXACT, PHRASE, BROAD). Returns a preview."
+        description = "Draft keyword additions with match types (EXACT, PHRASE, BROAD). Works for Display ad groups too: in a DISPLAY_STANDARD ad group the same keyword criterion is a Display (contextual) keyword, reported in display_keyword_view — pass match_type BROAD there, since Display keywords match page content rather than searches. Returns a preview."
     )]
     async fn draft_keywords(
         &self,
@@ -1743,6 +2087,42 @@ impl GoogleAdsMcp {
     }
 
     #[tool(
+        description = "Draft enabling many paused campaigns, ad groups, ads and keywords in one atomic mutate (every status changes, or none does) — e.g. a whole campaign with its ad groups and ads at once. Ads are 'adGroupId~adId' and keywords 'adGroupId~criterionId', the tails of their resource names. At most 500 per plan; repeats are dropped. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn enable_entities(
+        &self,
+        Parameters(params): Parameters<EntitiesStatusToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        match tools::entity_lifecycle::enable_entities(&config, &cid, &entity_ids(&params)) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Draft pausing many campaigns, ad groups, ads and keywords in one atomic mutate (every status changes, or none does) — e.g. every ad of one message across ad groups. Ads are 'adGroupId~adId' and keywords 'adGroupId~criterionId', the tails of their resource names. At most 500 per plan; repeats are dropped. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn pause_entities(
+        &self,
+        Parameters(params): Parameters<EntitiesStatusToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        match tools::entity_lifecycle::pause_entities(&config, &cid, &entity_ids(&params)) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
         description = "Draft REMOVING an entity (IRREVERSIBLE). Use pause_entity instead if temporary."
     )]
     async fn remove_entity(&self, Parameters(params): Parameters<EntityActionParams>) -> String {
@@ -1822,6 +2202,469 @@ impl GoogleAdsMcp {
             &params.campaign_id,
             &params.audience_id,
             &params.targeting_mode,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Add user lists to one or more ad groups as positive audience criteria — one ad_group_criterion per ad group × list. The ad-group-scoped counterpart of add_audience_targeting, and what a Display remarketing ad group needs. Whether the lists restrict reach (Targeting) or only inform bids (Observation) follows the ad group's AUDIENCE target restriction. For pure remarketing also set update_ad_group optimized_targeting_enabled=false, or Google keeps serving beyond the lists. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_ad_group_audiences(
+        &self,
+        Parameters(params): Parameters<AddAdGroupAudiencesToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::audiences::add_ad_group_audiences(
+            &config,
+            &cid,
+            &params.ad_group_ids,
+            &params.audience_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Exclude user lists (e.g. converters, customers) from a whole campaign (campaign_id — covers every ad group in it) or from specific ad groups (ad_group_ids). Pass exactly one scope. Writes NEGATIVE criteria: excluded users never see the ads. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn exclude_audiences(
+        &self,
+        Parameters(params): Parameters<ExcludeAudiencesToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::audiences::exclude_audiences(
+            &config,
+            &cid,
+            params.campaign_id.as_deref(),
+            &params.ad_group_ids.unwrap_or_default(),
+            &params.audience_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    // ── Display: frequency caps and placement exclusions ────────────────
+
+    #[tool(
+        description = "Set a campaign's impression frequency caps (Display and Video campaigns). The list replaces every existing cap, e.g. [{\"max_impressions\":3,\"time_unit\":\"DAY\"},{\"max_impressions\":10,\"time_unit\":\"WEEK\"}]; level defaults to CAMPAIGN (also AD_GROUP, AD_GROUP_AD). An empty list is refused. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_frequency_caps(
+        &self,
+        Parameters(params): Parameters<SetCampaignFrequencyCapsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::campaigns_write::set_campaign_frequency_caps(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.frequency_caps,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Exclude websites (placement_urls), mobile app categories (mobile_app_category_ids — 69500 is 'All Apps') and/or single mobile apps (mobile_app_ids: '1-<App Store id>' or '2-<package name>') from a campaign. Writes NEGATIVE campaign criteria, so the exclusion covers every ad group in the campaign. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn exclude_placements(
+        &self,
+        Parameters(params): Parameters<ExcludePlacementsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::placements::exclude_placements(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.placement_urls.unwrap_or_default(),
+            &params.mobile_app_category_ids.unwrap_or_default(),
+            &params.mobile_app_ids.unwrap_or_default(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Add website placements to Display ad groups: negative=false (default) TARGETS them (the ad groups only show on those sites, together with their other targeting); negative=true EXCLUDES them for these ad groups only, and then also accepts mobile_app_ids ('1-<App Store id>' / '2-<package name>') to exclude single apps. One ad_group_criterion per ad group × placement. URLs are normalized (scheme and trailing slash dropped), max 250 characters and two levels deep; adsenseformobileapps.com is refused. For campaign-wide exclusions use exclude_placements, account-wide add_account_exclusions. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_ad_group_placements(
+        &self,
+        Parameters(params): Parameters<AddAdGroupPlacementsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::placements::add_ad_group_placements(
+            &config,
+            &cid,
+            &params.ad_group_ids,
+            &params.placement_urls.unwrap_or_default(),
+            params.negative.unwrap_or(false),
+            &params.mobile_app_ids.unwrap_or_default(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Add account-level exclusions (CustomerNegativeCriterion) covering every campaign in the account: placement_urls (websites), mobile_app_category_ids (specific categories, e.g. 60008 Games — Google rejects 69500 'All Apps' at account level, so it is refused here; use exclude_placements per campaign for that), mobile_app_ids ('1-<App Store id>' / '2-<package name>') and content_label_types (v25 ContentLabelType). Reads the account's existing exclusions first and skips those, so the mutate does not fail on duplicates; if nothing new remains it answers NO_CHANGES without a plan. Content labels for Display: TRAGEDY, SOCIAL_ISSUES, PROFANITY, SEXUALLY_SUGGESTIVE, JUVENILE (sensitive content); VIDEO_RATING_DV_G/PG/T/MA and VIDEO_NOT_YET_RATED (digital content labels — excluding all five stops Display serving and is refused); EMBEDDED_VIDEO, LIVE_STREAMING_VIDEO, BELOW_THE_FOLD (Display only); BRAND_SUITABILITY_* themes. Deprecated or not for Display: PARKED_DOMAIN (Google removed the parked-domain setting on 10 Feb 2026), BRAND_SUITABILITY_HEALTH_SOURCE_UNDETERMINED (YouTube only), VIDEO (not in Google's current content suitability settings) — accepted, but flagged in the preview. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_account_exclusions(
+        &self,
+        Parameters(params): Parameters<AddAccountExclusionsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        // Validate before any HTTP, then read what already exists.
+        let requested = match tools::placements::prepare_account_exclusions(
+            &config,
+            &params.placement_urls.unwrap_or_default(),
+            &params.mobile_app_category_ids.unwrap_or_default(),
+            &params.mobile_app_ids.unwrap_or_default(),
+            &params.content_label_types.unwrap_or_default(),
+        ) {
+            Ok(requested) => requested,
+            Err(e) => return e.to_json().to_string(),
+        };
+        let client = match GoogleAdsClient::new(&config) {
+            Ok(c) => c,
+            Err(e) => return e.to_json().to_string(),
+        };
+        let existing = match tools::placements::fetch_account_exclusions(&client, &cid).await {
+            Ok(existing) => existing,
+            Err(e) => return error_response(&e).to_string(),
+        };
+
+        match tools::placements::build_account_exclusions_plan(&config, &cid, &requested, &existing)
+        {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Set a campaign's device bid modifiers: desktop, mobile, tablet, connected_tv — each 0 to exclude the device (-100%) or a multiplier from 0.1 (-90%) to 10.0 (+900%), e.g. 1.2 = +20%. Omitted devices stay as they are. Reads the campaign's device criteria first: existing ones are updated, missing ones created. Excluding all four devices is refused (pause the campaign instead). With Smart Bidding, adjustments other than an exclusion may be ignored or, with Target CPA, adjust the CPA target. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_device_modifiers(
+        &self,
+        Parameters(params): Parameters<SetCampaignDeviceModifiersToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        let modifiers = tools::devices::DeviceModifiers {
+            desktop: params.desktop,
+            mobile: params.mobile,
+            tablet: params.tablet,
+            connected_tv: params.connected_tv,
+        };
+
+        let campaign_id = match tools::devices::prepare_device_modifiers(
+            &config,
+            &params.campaign_id,
+            &modifiers,
+        ) {
+            Ok(campaign_id) => campaign_id,
+            Err(e) => return e.to_json().to_string(),
+        };
+        let client = match GoogleAdsClient::new(&config) {
+            Ok(c) => c,
+            Err(e) => return e.to_json().to_string(),
+        };
+        let existing =
+            match tools::devices::fetch_campaign_device_criteria(&client, &cid, &campaign_id).await
+            {
+                Ok(existing) => existing,
+                Err(e) => return error_response(&e).to_string(),
+            };
+
+        match tools::devices::set_campaign_device_modifiers(
+            &config,
+            &cid,
+            &campaign_id,
+            &modifiers,
+            &existing,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    // ── Display: custom segments, user interests, uploaded ads ──────────
+
+    #[tool(
+        description = "Create a custom segment (API: CustomAudience) from keywords (each max 10 words / 80 chars), urls (with protocol, e.g. https://example.com/page) and/or apps (Android package names such as com.example.runner). At least one member; repeats are dropped. segment_type: AUTO (default — Google picks the interpretation) or SEARCH (people who searched for these terms on Google); INTEREST and PURCHASE_INTENT are not allowed for new segments in API v25. The name must be unique in the account. Sent through customAudiences:mutate; after apply, custom_segment_ids in the response holds the new ID for add_ad_group_custom_segments. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn create_custom_segment(
+        &self,
+        Parameters(params): Parameters<CreateCustomSegmentToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::custom_segments::create_custom_segment(
+            &config,
+            &cid,
+            &params.name,
+            params.description.as_deref(),
+            params.segment_type,
+            &params.keywords.unwrap_or_default(),
+            &params.urls.unwrap_or_default(),
+            &params.apps.unwrap_or_default(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Add custom segments (from create_custom_segment) to one or more ad groups as positive audience criteria — one ad_group_criterion with custom_audience per ad group × segment. Whether they narrow reach (TARGETING) or only observe (OBSERVATION) follows the ad group's audience_targeting_mode (update_ad_group). Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_ad_group_custom_segments(
+        &self,
+        Parameters(params): Parameters<AddAdGroupCustomSegmentsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::audiences::add_ad_group_custom_segments(
+            &config,
+            &cid,
+            &params.ad_group_ids,
+            &params.custom_segment_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Add user interests — affinity and in-market segments, e.g. 92926 — to one or more ad groups as positive audience criteria (user_interest = customers/{cid}/userInterests/{id}), one per ad group × interest. Find IDs and their campaign-type availability with run_gaql('SELECT user_interest.user_interest_id, user_interest.name, user_interest.taxonomy_type, user_interest.availabilities FROM user_interest'). Targeting vs observation follows the ad group's audience_targeting_mode. Detailed demographics (e.g. Homeowners) are not user interests and are not covered. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn add_ad_group_user_interests(
+        &self,
+        Parameters(params): Parameters<AddAdGroupUserInterestsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::audiences::add_ad_group_user_interests(
+            &config,
+            &cid,
+            &params.ad_group_ids,
+            &params.user_interest_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Create an uploaded display ad from a local file in one atomic mutate: ad_type=HTML5 makes a MEDIA_BUNDLE asset from a .zip (max 600 KB) and an ad with display_upload_ad (HTML5_UPLOAD_AD); ad_type=IMAGE makes an IMAGE asset from a .jpg/.jpeg/.png/.gif (max 150 KB) and an image_ad. file_path must be absolute (or start with ~/); the file is checked locally first (exists, extension, size, content matches extension; image dimensions against Google's standard sizes, as a warning). The preview shows size and SHA-256, never the file content. IMAGE ads also get display_url = the final URL's host, which Google requires. status defaults to PAUSED. HTML5 upload ads only work for accounts Google has allowlisted — test with confirm_and_apply validate_only=true. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn upload_display_ad(
+        &self,
+        Parameters(params): Parameters<UploadDisplayAdToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::display_ads::upload_display_ad(&tools::display_ads::UploadDisplayAdParams {
+            config: &config,
+            customer_id: &cid,
+            ad_group_id: &params.ad_group_id,
+            file_path: &params.file_path,
+            ad_type: params.ad_type,
+            ad_name: &params.ad_name,
+            final_url: &params.final_url,
+            status: params.status,
+        }) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Upload several local files as display ads into several ad groups in one atomic mutate: every file becomes one asset (MEDIA_BUNDLE for ad_type=HTML5, IMAGE for ad_type=IMAGE) and one ad in every ad group, all referring to that asset. At most 10 files per batch. Each file is checked like upload_display_ad (absolute path, extension, size, content; image sizes as a warning); ad_name must be unique within the batch. final_url applies to every file without its own final_url (use a file's own for per-file UTM tags). The preview shows sizes and SHA-256, never file content. status defaults to PAUSED. Run confirm_and_apply with validate_only=true first. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn upload_display_ads(
+        &self,
+        Parameters(params): Parameters<UploadDisplayAdsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+        let files: Vec<tools::display_ads::UploadFile> = params
+            .files
+            .iter()
+            .map(|f| tools::display_ads::UploadFile {
+                file_path: &f.file_path,
+                ad_name: &f.ad_name,
+                final_url: f.final_url.as_deref(),
+            })
+            .collect();
+
+        match tools::display_ads::upload_display_ads(&tools::display_ads::UploadDisplayAdsParams {
+            config: &config,
+            customer_id: &cid,
+            ad_group_ids: &params.ad_group_ids,
+            files: &files,
+            ad_type: params.ad_type,
+            final_url: &params.final_url,
+            status: params.status,
+        }) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    // ── Conversion goals ────────────────────────────────────────────────
+
+    #[tool(
+        description = "Create a custom conversion goal: a named set of conversion actions (primary OR secondary) a campaign can bid on. Changes nothing until a campaign uses it via set_campaign_custom_conversion_goal. Must be created in the account that owns the conversion actions. After apply, the goal ID is the trailing segment of customConversionGoalResult.resourceName. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn create_custom_conversion_goal(
+        &self,
+        Parameters(params): Parameters<CreateCustomConversionGoalToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::conversion_goals::create_custom_conversion_goal(
+            &config,
+            &cid,
+            &params.name,
+            &params.conversion_action_ids,
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Make ONE campaign bid on a custom conversion goal without touching the account defaults or any other campaign: updates the campaign's ConversionGoalCampaignConfig.custom_conversion_goal (Google then switches the campaign to campaign-level goals). exclusive=true (default) reads the campaign's standard conversion goals and sets every biddable one to biddable=false in the same atomic mutate, so the campaign bids only on the custom goal's actions — a campaign otherwise combines one custom goal with its standard goals. Secondary conversion actions in the custom goal are bid on too. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_custom_conversion_goal(
+        &self,
+        Parameters(params): Parameters<SetCampaignCustomConversionGoalToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        let (campaign_id, goal_id) =
+            match tools::conversion_goals::prepare_campaign_custom_conversion_goal(
+                &config,
+                &params.campaign_id,
+                &params.custom_conversion_goal_id,
+            ) {
+                Ok(ids) => ids,
+                Err(e) => return e.to_json().to_string(),
+            };
+
+        let existing = if params.exclusive.unwrap_or(true) {
+            let client = match GoogleAdsClient::new(&config) {
+                Ok(c) => c,
+                Err(e) => return e.to_json().to_string(),
+            };
+            match tools::conversion_goals::fetch_campaign_conversion_goals(
+                &client,
+                &cid,
+                &campaign_id,
+            )
+            .await
+            {
+                Ok(goals) => Some(goals),
+                Err(e) => return error_response(&e).to_string(),
+            }
+        } else {
+            None
+        };
+
+        match tools::conversion_goals::set_campaign_custom_conversion_goal(
+            &config,
+            &cid,
+            &campaign_id,
+            &goal_id,
+            existing.as_deref(),
+        ) {
+            Ok(preview) => preview.to_string(),
+            Err(e) => e.to_json().to_string(),
+        }
+    }
+
+    #[tool(
+        description = "Set which standard conversion goals (category × origin, e.g. SUBMIT_LEAD_FORM / WEBSITE) a campaign bids on: one CampaignConversionGoal update of biddable per goal. Moves the campaign to campaign-level goals, so account-default changes stop reaching it; other campaigns are untouched. Only goals Google generated for the campaign exist (one per category × origin the account has actions in). Only PRIMARY actions in a biddable goal drive bidding — to bid on one specific or secondary action, use create_custom_conversion_goal + set_campaign_custom_conversion_goal. Returns a preview — call confirm_and_apply to execute."
+    )]
+    async fn set_campaign_conversion_goals(
+        &self,
+        Parameters(params): Parameters<SetCampaignConversionGoalsToolParams>,
+    ) -> String {
+        if let Some(err) = self.check_write_allowed() {
+            return err;
+        }
+        let cid = self.resolve_customer_id(params.customer_id.as_deref());
+        let config = self.config.clone();
+
+        match tools::conversion_goals::set_campaign_conversion_goals(
+            &config,
+            &cid,
+            &params.campaign_id,
+            &params.goals,
         ) {
             Ok(preview) => preview.to_string(),
             Err(e) => e.to_json().to_string(),
@@ -2200,7 +3043,7 @@ impl GoogleAdsMcp {
     // ── Confirm & Apply ─────────────────────────────────────────────────
 
     #[tool(
-        description = "Execute a previously previewed change. IMPORTANT: defaults to dry_run=true. Set dry_run=false to make real changes. If config.safety.require_dry_run is true, dry_run=false will be rejected unless bypass_require_dry_run=true is also set. If the mutate is rejected by Google ad policy, the error lists the offending text and policy; when those violations are exemptible (common for medical/health keywords), retry the same plan_id with exempt_policy_violations=true."
+        description = "Execute a previously previewed change. IMPORTANT: defaults to dry_run=true. Set dry_run=false to make real changes. If config.safety.require_dry_run is true, dry_run=false will be rejected unless bypass_require_dry_run=true is also set. validate_only=true sends the plan to Google with validateOnly: Google checks every operation as for a real apply and NOTHING changes; the plan is kept so the same plan_id can be applied afterwards (allowed under require_dry_run, no confirmed_twice needed; recommendation plans answer NOT_VALIDATED because their RPCs have no validate-only mode). If the mutate is rejected by Google ad policy, the error lists the offending text and policy; when those violations are exemptible (common for medical/health keywords), retry the same plan_id with exempt_policy_violations=true."
     )]
     async fn confirm_and_apply(
         &self,
@@ -2211,6 +3054,7 @@ impl GoogleAdsMcp {
         }
         let config = self.config.clone();
         let dry_run = params.dry_run.unwrap_or(true);
+        let validate_only = params.validate_only.unwrap_or(false);
 
         let input = tools::confirm::ConfirmApplyInput {
             plan_id: params.plan_id,
@@ -2218,11 +3062,22 @@ impl GoogleAdsMcp {
             bypass_require_dry_run: params.bypass_require_dry_run.unwrap_or(false),
             confirmed_twice: params.confirmed_twice.unwrap_or(false),
             exempt_policy_violations: params.exempt_policy_violations.unwrap_or(false),
+            validate_only,
         };
 
         match tools::confirm::confirm_and_apply(&config, input).await {
             Ok(result) => result.to_string(),
-            Err(e) => error_response(&e).to_string(),
+            Err(e) => {
+                let mut out = error_response(&e);
+                if validate_only {
+                    out["validate_only"] = serde_json::json!(true);
+                    out["applied"] = serde_json::json!(false);
+                    out["note"] = serde_json::json!(
+                        "Validate-only run: nothing was changed in Google Ads. The plan is kept."
+                    );
+                }
+                out.to_string()
+            }
         }
     }
 }
@@ -2431,5 +3286,95 @@ mod tests {
             "Expected at least 37 tools, got {}. Some tools may be missing from the router.",
             tools.len()
         );
+    }
+
+    /// The Display remarketing tools must be reachable over MCP, not just as
+    /// library functions.
+    #[test]
+    fn test_display_targeting_tools_are_registered() {
+        let config = Config::default();
+        let server = GoogleAdsMcp::new(config).unwrap();
+        let names: Vec<String> = server
+            .tool_router
+            .list_all()
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        for expected in [
+            "add_ad_group_audiences",
+            "exclude_audiences",
+            "set_campaign_frequency_caps",
+            "exclude_placements",
+        ] {
+            assert!(
+                names.iter().any(|n| n == expected),
+                "{} is missing from the tool router",
+                expected
+            );
+        }
+    }
+
+    /// The Display awareness tools must be reachable over MCP too.
+    #[test]
+    fn test_display_awareness_tools_are_registered() {
+        let config = Config::default();
+        let server = GoogleAdsMcp::new(config).unwrap();
+        let names: Vec<String> = server
+            .tool_router
+            .list_all()
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        for expected in [
+            "create_custom_segment",
+            "add_ad_group_custom_segments",
+            "add_ad_group_user_interests",
+            "add_ad_group_placements",
+            "add_account_exclusions",
+            "set_campaign_device_modifiers",
+            "create_custom_conversion_goal",
+            "set_campaign_custom_conversion_goal",
+            "set_campaign_conversion_goals",
+            "upload_display_ad",
+            "upload_display_ads",
+            "enable_entities",
+            "pause_entities",
+        ] {
+            assert!(
+                names.iter().any(|n| n == expected),
+                "{} is missing from the tool router",
+                expected
+            );
+        }
+        assert!(
+            names.len() >= 80,
+            "67 tools before the Display awareness tools + 13 new ones, got {}",
+            names.len()
+        );
+    }
+
+    /// The new parameters must show up in the schemas MCP hosts see.
+    #[test]
+    fn test_new_parameters_are_in_the_tool_schemas() {
+        let config = Config::default();
+        let server = GoogleAdsMcp::new(config).unwrap();
+        let tools = server.tool_router.list_all();
+        let schema_of = |name: &str| {
+            let tool = tools
+                .iter()
+                .find(|t| t.name == name)
+                .unwrap_or_else(|| panic!("{name} registered"));
+            serde_json::to_string(&tool.input_schema).unwrap_or_default()
+        };
+        assert!(schema_of("confirm_and_apply").contains("validate_only"));
+        assert!(schema_of("update_ad_group").contains("audience_targeting_mode"));
+        let account = schema_of("add_account_exclusions");
+        assert!(account.contains("BELOW_THE_FOLD"));
+        assert!(!account.contains("\"UNSPECIFIED\""));
+        let segment = schema_of("create_custom_segment");
+        assert!(segment.contains("SEARCH"));
+        assert!(!segment.contains("PURCHASE_INTENT\""));
     }
 }

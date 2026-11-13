@@ -98,6 +98,20 @@ pub const VALID_MUTATE_OPERATION_KEYS: &[&str] = &[
     "userListOperation",
 ];
 
+/// Keys a `CustomAudienceOperation` may carry (v25 `CustomAudienceService`).
+///
+/// Custom audiences ("custom segments" in the UI) are not a `MutateOperation`
+/// variant: they have their own RPC, `customers/{cid}/customAudiences:mutate`,
+/// whose operations are bare `{create | update | remove, updateMask}` objects
+/// rather than `{"<resource>Operation": {...}}` wrappers. Wrapping one the
+/// `googleAds:mutate` way is the mistake this list catches before any HTTP:
+/// the wrapper key is not in it.
+///
+/// Source: Google Ads API v25 `CustomAudienceOperation` (`update_mask` plus the
+/// `create` / `update` / `remove` oneof).
+pub const VALID_CUSTOM_AUDIENCE_OPERATION_KEYS: &[&str] =
+    &["create", "update", "remove", "updateMask"];
+
 /// The `apply_parameters` oneof on `ApplyRecommendationOperation`, in the
 /// camelCase spelling the REST surface expects.
 ///
@@ -202,6 +216,17 @@ pub struct MutateResponse {
     pub mutate_operation_responses: Vec<serde_json::Value>,
     #[serde(default)]
     pub partial_failure_error: Option<serde_json::Value>,
+}
+
+/// Response from `customAudiences:mutate`.
+///
+/// Each result carries the `resourceName` of a created or updated custom
+/// audience. A validate-only request returns no results.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct MutateCustomAudiencesResponse {
+    #[serde(default)]
+    pub results: Vec<serde_json::Value>,
 }
 
 /// Response from `recommendations:apply`.
@@ -459,6 +484,22 @@ impl GoogleAdsClient {
         customer_id: &str,
         operations: Vec<MutateOperation>,
     ) -> Result<MutateResponse> {
+        self.mutate_with_options(customer_id, operations, false)
+            .await
+    }
+
+    /// [`Self::mutate`], optionally as a validate-only request.
+    ///
+    /// With `validate_only = true` Google checks every operation exactly as it
+    /// would for a real mutate — field names, enum values, references,
+    /// policy — and returns only errors: nothing is written. The flag is sent
+    /// only when set, so a real apply carries the same body as before.
+    pub async fn mutate_with_options(
+        &self,
+        customer_id: &str,
+        operations: Vec<MutateOperation>,
+        validate_only: bool,
+    ) -> Result<MutateResponse> {
         Self::validate_mutate_operations(&operations).map_err(McpGoogleAdsError::Validation)?;
 
         let normalized_id = Self::normalize_customer_id(customer_id);
@@ -468,7 +509,7 @@ impl GoogleAdsClient {
         );
         let headers = self.build_headers().await?;
 
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "mutateOperations": operations,
             // Atomic on purpose: with partialFailure=true Google COMMITS the
             // operations that succeed and only reports errors for the rest, so a
@@ -479,6 +520,9 @@ impl GoogleAdsClient {
             // failing operation aborts the whole request and nothing is written.
             "partialFailure": false,
         });
+        if validate_only {
+            body["validateOnly"] = serde_json::json!(true);
+        }
 
         let response = self
             .http
@@ -494,8 +538,110 @@ impl GoogleAdsClient {
             return Err(parse_google_ads_error(status, &error_body));
         }
 
-        let mutate_response: MutateResponse = response.json().await?;
+        // A validate-only success may come back as an empty body.
+        let text = response.text().await?;
+        if text.trim().is_empty() {
+            return Ok(MutateResponse {
+                mutate_operation_responses: Vec::new(),
+                partial_failure_error: None,
+            });
+        }
+        let mutate_response: MutateResponse = serde_json::from_str(&text)?;
         Ok(mutate_response)
+    }
+
+    /// Validate that every custom audience operation is a bare
+    /// `CustomAudienceOperation`: keys from
+    /// [`VALID_CUSTOM_AUDIENCE_OPERATION_KEYS`] only, and exactly one of
+    /// `create` / `update` / `remove`. Returns the first problem found.
+    pub fn validate_custom_audience_operations(
+        operations: &[serde_json::Value],
+    ) -> std::result::Result<(), String> {
+        if operations.is_empty() {
+            return Err("customAudiences:mutate needs at least one operation".to_string());
+        }
+        for (idx, op) in operations.iter().enumerate() {
+            let obj = op.as_object().ok_or_else(|| {
+                format!(
+                    "CustomAudienceOperation at index {} is not a JSON object",
+                    idx
+                )
+            })?;
+            for key in obj.keys() {
+                if !VALID_CUSTOM_AUDIENCE_OPERATION_KEYS.contains(&key.as_str()) {
+                    return Err(format!(
+                        "Unknown CustomAudienceOperation key '{}' at index {}. Custom \
+                         audiences are mutated through customAudiences:mutate with bare \
+                         create/update/remove operations, not through googleAds:mutate.",
+                        key, idx
+                    ));
+                }
+            }
+            let actions = ["create", "update", "remove"]
+                .iter()
+                .filter(|k| obj.contains_key(**k))
+                .count();
+            if actions != 1 {
+                return Err(format!(
+                    "CustomAudienceOperation at index {} must carry exactly one of \
+                     create, update or remove, got {}",
+                    idx, actions
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Mutate custom audiences via the dedicated
+    /// `customers/{cid}/customAudiences:mutate` RPC (v25
+    /// `CustomAudienceService.MutateCustomAudiences`).
+    ///
+    /// Operations are checked with
+    /// [`Self::validate_custom_audience_operations`] before any HTTP traffic.
+    /// The RPC has no partial-failure mode: the request is atomic.
+    pub async fn mutate_custom_audiences(
+        &self,
+        customer_id: &str,
+        operations: Vec<serde_json::Value>,
+        validate_only: bool,
+    ) -> Result<MutateCustomAudiencesResponse> {
+        Self::validate_custom_audience_operations(&operations)
+            .map_err(McpGoogleAdsError::Validation)?;
+
+        let normalized_id = Self::normalize_customer_id(customer_id);
+        let url = format!(
+            "{}/customers/{}/customAudiences:mutate",
+            self.base_url, normalized_id
+        );
+        let headers = self.build_headers().await?;
+
+        let mut body = serde_json::json!({ "operations": operations });
+        if validate_only {
+            body["validateOnly"] = serde_json::json!(true);
+        }
+
+        let response = self
+            .http
+            .post(&url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_body = response.text().await.unwrap_or_default();
+            return Err(parse_google_ads_error(status, &error_body));
+        }
+
+        // A validate-only success may come back as an empty body.
+        let text = response.text().await?;
+        if text.trim().is_empty() {
+            return Ok(MutateCustomAudiencesResponse {
+                results: Vec::new(),
+            });
+        }
+        Ok(serde_json::from_str(&text)?)
     }
 
     /// Apply recommendations via the dedicated `recommendations:apply` RPC.

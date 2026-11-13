@@ -4,6 +4,9 @@ use crate::config::Config;
 use crate::error::{McpGoogleAdsError, Result};
 use crate::safety::guards::check_blocked_operation;
 use crate::safety::preview::{store_plan, ChangePlan};
+use crate::tools::ids::{
+    check_fanout, dedupe_preserving_order, validate_id_list, validate_numeric_id,
+};
 
 const VALID_TARGETING_MODES: &[&str] = &["TARGETING", "OBSERVATION"];
 
@@ -70,6 +73,404 @@ pub fn add_audience_targeting(
         changes,
         false,
         vec![operation],
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
+/// Validate and deduplicate a list of user list IDs.
+fn user_list_ids(audience_ids: &[String]) -> Result<Vec<String>> {
+    if audience_ids.is_empty() {
+        return Err(McpGoogleAdsError::Validation(
+            "audience_ids must not be empty — pass the numeric user list IDs \
+             (SELECT user_list.id, user_list.name FROM user_list)"
+                .to_string(),
+        ));
+    }
+    let ids = audience_ids
+        .iter()
+        .map(|id| validate_numeric_id("audience_id", id))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(dedupe_preserving_order(&ids))
+}
+
+/// Validate and deduplicate a list of ad group IDs.
+fn ad_group_id_list(ad_group_ids: &[String]) -> Result<Vec<String>> {
+    let ids = ad_group_ids
+        .iter()
+        .map(|id| validate_numeric_id("ad_group_id", id))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(dedupe_preserving_order(&ids))
+}
+
+/// Refuse a plan that would write more criteria than one batch should carry.
+fn check_criteria_count(ad_groups: usize, lists: usize) -> Result<usize> {
+    check_fanout(ad_groups, lists, "lists")
+}
+
+/// What decides whether ad group audience criteria narrow reach — shared by
+/// every tool that adds them.
+const AUDIENCE_MODE_NOTE: &str = "Whether these segments restrict reach (Targeting) or only \
+     inform bids (Observation) follows the ad group's AUDIENCE target restriction — set it with \
+     update_ad_group(audience_targeting_mode=...). Optimized targeting can still serve beyond \
+     them — turn it off with update_ad_group(optimized_targeting_enabled=false).";
+
+/// One positive `adGroupCriterionOperation.create` per (ad group × item).
+///
+/// `criterion` turns an item ID into the criterion field and its value, e.g.
+/// `("userInterest", {"userInterestCategory": ...})`.
+fn positive_ad_group_criteria(
+    cid: &str,
+    ad_groups: &[String],
+    items: &[String],
+    criterion: impl Fn(&str) -> (&'static str, serde_json::Value),
+) -> Vec<serde_json::Value> {
+    let mut operations = Vec::with_capacity(ad_groups.len() * items.len());
+    for ad_group_id in ad_groups {
+        for item in items {
+            let (field, value) = criterion(item);
+            let mut create = json!({
+                "adGroup": format!("customers/{}/adGroups/{}", cid, ad_group_id),
+            });
+            create[field] = value;
+            operations.push(json!({ "adGroupCriterionOperation": { "create": create } }));
+        }
+    }
+    operations
+}
+
+/// Add custom segments to one or more ad groups as positive audience criteria.
+///
+/// A custom segment is the Google Ads UI name for the API's `CustomAudience`
+/// (create one with `create_custom_segment`). Writes one
+/// `adGroupCriterionOperation.create` with `custom_audience` per (ad group ×
+/// segment). The API documents custom audience criteria as positive only, so
+/// there is no negative variant.
+///
+/// Returns a [`ChangePlan`] preview to be confirmed via `confirm_and_apply`.
+/// Reversible (remove the resulting criteria), so no double confirmation.
+pub fn add_ad_group_custom_segments(
+    config: &Config,
+    customer_id: &str,
+    ad_group_ids: &[String],
+    custom_segment_ids: &[String],
+) -> Result<serde_json::Value> {
+    check_blocked_operation("add_ad_group_custom_segments", &config.safety)?;
+
+    let ad_groups = validate_id_list(
+        "ad_group_ids",
+        "ad_group_id",
+        ad_group_ids,
+        "name every ad group the segments should target",
+    )?;
+    let segments = validate_id_list(
+        "custom_segment_ids",
+        "custom_segment_id",
+        custom_segment_ids,
+        "pass numeric custom segment IDs (create_custom_segment returns them as \
+         custom_segment_ids; or SELECT custom_audience.id, custom_audience.name FROM \
+         custom_audience)",
+    )?;
+    let total = check_fanout(ad_groups.len(), segments.len(), "segments")?;
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let operations = positive_ad_group_criteria(&cid, &ad_groups, &segments, |id| {
+        (
+            "customAudience",
+            json!({ "customAudience": format!("customers/{}/customAudiences/{}", cid, id) }),
+        )
+    });
+
+    let changes = json!({
+        "ad_group_ids": ad_groups,
+        "custom_segment_ids": segments,
+        "total_criteria": total,
+        "negative": false,
+        "note": AUDIENCE_MODE_NOTE,
+    });
+
+    let plan = ChangePlan::new(
+        "add_ad_group_custom_segments".to_string(),
+        "ad_group_criterion".to_string(),
+        ad_groups.first().cloned().unwrap_or_default(),
+        cid,
+        changes,
+        false,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
+/// Add user interests — affinity and in-market segments — to one or more ad
+/// groups as positive audience criteria.
+///
+/// Writes one `adGroupCriterionOperation.create` with `user_interest` per (ad
+/// group × interest), referencing `customers/{cid}/userInterests/{id}`. Look
+/// the IDs up with `SELECT user_interest.user_interest_id, user_interest.name,
+/// user_interest.taxonomy_type, user_interest.availabilities FROM
+/// user_interest`; the API notes that some user interests are only available
+/// for specific campaign types, which `availabilities` shows.
+///
+/// Returns a [`ChangePlan`] preview to be confirmed via `confirm_and_apply`.
+/// Reversible (remove the resulting criteria), so no double confirmation.
+pub fn add_ad_group_user_interests(
+    config: &Config,
+    customer_id: &str,
+    ad_group_ids: &[String],
+    user_interest_ids: &[String],
+) -> Result<serde_json::Value> {
+    check_blocked_operation("add_ad_group_user_interests", &config.safety)?;
+
+    let ad_groups = validate_id_list(
+        "ad_group_ids",
+        "ad_group_id",
+        ad_group_ids,
+        "name every ad group the interests should target",
+    )?;
+    let interests = validate_id_list(
+        "user_interest_ids",
+        "user_interest_id",
+        user_interest_ids,
+        "pass numeric user interest IDs (SELECT user_interest.user_interest_id, \
+         user_interest.name, user_interest.taxonomy_type FROM user_interest)",
+    )?;
+    let total = check_fanout(ad_groups.len(), interests.len(), "interests")?;
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let operations = positive_ad_group_criteria(&cid, &ad_groups, &interests, |id| {
+        (
+            "userInterest",
+            json!({
+                "userInterestCategory": format!("customers/{}/userInterests/{}", cid, id)
+            }),
+        )
+    });
+
+    let changes = json!({
+        "ad_group_ids": ad_groups,
+        "user_interest_ids": interests,
+        "total_criteria": total,
+        "negative": false,
+        "note": AUDIENCE_MODE_NOTE,
+    });
+
+    let plan = ChangePlan::new(
+        "add_ad_group_user_interests".to_string(),
+        "ad_group_criterion".to_string(),
+        ad_groups.first().cloned().unwrap_or_default(),
+        cid,
+        changes,
+        false,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
+/// Add user lists as positive audience criteria on one or more ad groups.
+///
+/// Writes one `adGroupCriterionOperation.create` per (ad group × list). This
+/// is the ad-group-scoped counterpart of [`add_audience_targeting`], and the
+/// one a Display remarketing setup needs: a Display ad group's audience
+/// targeting lives on the ad group, and that is where the Google Ads UI puts
+/// it too.
+///
+/// Whether the lists *restrict* reach or only *inform* bids is not decided
+/// here but by the ad group's `targeting_setting` for the `AUDIENCE` dimension
+/// (`bid_only = false` is "Targeting", `true` is "Observation"). Even in
+/// Targeting mode, optimized targeting can still serve far beyond the lists:
+/// for a remarketing-only ad group, also call `update_ad_group` with
+/// `optimized_targeting_enabled = false`.
+///
+/// A list that is already a *negative* criterion on the same ad group collides
+/// on the shared resource name `adGroupCriteria/{ad_group}~{criterion_id}`;
+/// Google rejects the create, so remove the exclusion first.
+///
+/// Returns a [`ChangePlan`] preview to be confirmed via `confirm_and_apply`.
+/// Reversible (remove the resulting criteria), so no double confirmation.
+pub fn add_ad_group_audiences(
+    config: &Config,
+    customer_id: &str,
+    ad_group_ids: &[String],
+    audience_ids: &[String],
+) -> Result<serde_json::Value> {
+    check_blocked_operation("add_ad_group_audiences", &config.safety)?;
+
+    if ad_group_ids.is_empty() {
+        return Err(McpGoogleAdsError::Validation(
+            "ad_group_ids must not be empty — name every ad group the lists should target"
+                .to_string(),
+        ));
+    }
+    let ad_groups = ad_group_id_list(ad_group_ids)?;
+    let lists = user_list_ids(audience_ids)?;
+    let total = check_criteria_count(ad_groups.len(), lists.len())?;
+
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+
+    let mut operations = Vec::with_capacity(total);
+    for ad_group_id in &ad_groups {
+        for list_id in &lists {
+            operations.push(json!({
+                "adGroupCriterionOperation": {
+                    "create": {
+                        "adGroup": format!("customers/{}/adGroups/{}", cid, ad_group_id),
+                        "userList": {
+                            "userList": format!("customers/{}/userLists/{}", cid, list_id)
+                        }
+                    }
+                }
+            }));
+        }
+    }
+
+    let changes = json!({
+        "ad_group_ids": ad_groups,
+        "audience_ids": lists,
+        "total_criteria": total,
+        "negative": false,
+        "note": "Whether these lists restrict reach (Targeting) or only inform bids \
+                 (Observation) follows the ad group's AUDIENCE target restriction — set it \
+                 with update_ad_group(audience_targeting_mode=...). Optimized targeting can \
+                 still serve beyond the lists — turn it off with \
+                 update_ad_group(optimized_targeting_enabled=false) for pure remarketing.",
+    });
+
+    let plan = ChangePlan::new(
+        "add_ad_group_audiences".to_string(),
+        "ad_group_criterion".to_string(),
+        ad_groups
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "new".to_string()),
+        cid,
+        changes,
+        false,
+        operations,
+    );
+
+    let preview = plan.to_preview();
+    store_plan(plan);
+    Ok(preview)
+}
+
+/// Exclude user lists from a campaign, or from specific ad groups.
+///
+/// Writes a NEGATIVE criterion per list: a `campaignCriterionOperation` when
+/// `campaign_id` is given (the exclusion covers every ad group in the
+/// campaign, including ones added later), or an `adGroupCriterionOperation`
+/// per (ad group × list) when `ad_group_ids` is. Exactly one of the two scopes
+/// must be supplied. The usual case is keeping converters and customers out
+/// of a remarketing campaign.
+///
+/// Excluded users never see the ads — this is absolute, not a bid adjustment.
+///
+/// Returns a [`ChangePlan`] preview to be confirmed via `confirm_and_apply`.
+/// Reversible (remove the resulting criteria), so no double confirmation.
+pub fn exclude_audiences(
+    config: &Config,
+    customer_id: &str,
+    campaign_id: Option<&str>,
+    ad_group_ids: &[String],
+    audience_ids: &[String],
+) -> Result<serde_json::Value> {
+    check_blocked_operation("exclude_audiences", &config.safety)?;
+
+    let campaign_id = campaign_id.filter(|c| !c.trim().is_empty());
+    match (campaign_id.is_some(), ad_group_ids.is_empty()) {
+        (true, false) => {
+            return Err(McpGoogleAdsError::Validation(
+                "pass campaign_id OR ad_group_ids, not both — a campaign-level exclusion \
+                 already covers every ad group in the campaign"
+                    .to_string(),
+            ))
+        }
+        (false, true) => {
+            return Err(McpGoogleAdsError::Validation(
+                "pass campaign_id (exclude from the whole campaign) or ad_group_ids \
+                 (exclude from those ad groups only)"
+                    .to_string(),
+            ))
+        }
+        _ => {}
+    }
+
+    let lists = user_list_ids(audience_ids)?;
+    let cid = crate::client::GoogleAdsClient::normalize_customer_id(customer_id);
+    let list_resource = |id: &str| format!("customers/{}/userLists/{}", cid, id);
+
+    let (entity_type, entity_id, operations, scope) = if let Some(campaign) = campaign_id {
+        let campaign = validate_numeric_id("campaign_id", campaign)?;
+        check_criteria_count(1, lists.len())?;
+        let campaign_resource = format!("customers/{}/campaigns/{}", cid, campaign);
+        let operations: Vec<serde_json::Value> = lists
+            .iter()
+            .map(|list_id| {
+                json!({
+                    "campaignCriterionOperation": {
+                        "create": {
+                            "campaign": campaign_resource,
+                            "negative": true,
+                            "userList": { "userList": list_resource(list_id) }
+                        }
+                    }
+                })
+            })
+            .collect();
+        (
+            "campaign_criterion",
+            campaign.clone(),
+            operations,
+            json!({ "campaign_id": campaign }),
+        )
+    } else {
+        let ad_groups = ad_group_id_list(ad_group_ids)?;
+        let total = check_criteria_count(ad_groups.len(), lists.len())?;
+        let mut operations = Vec::with_capacity(total);
+        for ad_group_id in &ad_groups {
+            for list_id in &lists {
+                operations.push(json!({
+                    "adGroupCriterionOperation": {
+                        "create": {
+                            "adGroup": format!("customers/{}/adGroups/{}", cid, ad_group_id),
+                            "negative": true,
+                            "userList": { "userList": list_resource(list_id) }
+                        }
+                    }
+                }));
+            }
+        }
+        (
+            "ad_group_criterion",
+            ad_groups.first().cloned().unwrap_or_default(),
+            operations,
+            json!({ "ad_group_ids": ad_groups }),
+        )
+    };
+
+    let changes = json!({
+        "scope": scope,
+        "audience_ids": lists,
+        "total_criteria": operations.len(),
+        "negative": true,
+        "note": "Excluded users never see the ads — absolute, not a bid adjustment.",
+    });
+
+    let plan = ChangePlan::new(
+        "exclude_audiences".to_string(),
+        entity_type.to_string(),
+        entity_id,
+        cid,
+        changes,
+        false,
+        operations,
     );
 
     let preview = plan.to_preview();
@@ -282,5 +683,182 @@ mod tests {
         assert!(result.is_err());
         let err = result.err().map(|e| e.to_string()).unwrap_or_default();
         assert!(err.contains("blocked"));
+    }
+
+    /// Pull the stored mutate operations out of a preview.
+    fn operations_of(preview: &serde_json::Value) -> Vec<serde_json::Value> {
+        use crate::safety::preview::{get_plan, remove_plan};
+        let plan_id = preview["plan_id"].as_str().expect("plan_id present");
+        let plan = get_plan(plan_id).expect("plan stored");
+        let ops = plan.mutate_operations.clone();
+        remove_plan(plan_id);
+        ops
+    }
+
+    fn ids(values: &[&str]) -> Vec<String> {
+        values.iter().map(|v| v.to_string()).collect()
+    }
+
+    #[test]
+    fn add_ad_group_audiences_writes_one_positive_criterion_per_pair() {
+        let config = Config::default();
+        let preview = add_ad_group_audiences(
+            &config,
+            "123-456-7890",
+            &ids(&["111", "222"]),
+            &ids(&["901", "902"]),
+        )
+        .expect("ok");
+
+        assert_eq!(preview["operation"], "add_ad_group_audiences");
+        assert_eq!(preview["entity_type"], "ad_group_criterion");
+        assert_eq!(preview["requires_double_confirm"], false);
+        assert_eq!(preview["changes"]["total_criteria"], 4);
+
+        let ops = operations_of(&preview);
+        assert_eq!(ops.len(), 4, "2 ad groups × 2 lists");
+        let first = &ops[0]["adGroupCriterionOperation"]["create"];
+        assert_eq!(first["adGroup"], "customers/1234567890/adGroups/111");
+        assert_eq!(
+            first["userList"]["userList"],
+            "customers/1234567890/userLists/901"
+        );
+        // Positive criteria carry no negative flag at all.
+        assert!(first["negative"].is_null());
+        assert_eq!(
+            ops[3]["adGroupCriterionOperation"]["create"]["adGroup"],
+            "customers/1234567890/adGroups/222"
+        );
+    }
+
+    #[test]
+    fn add_ad_group_audiences_dedupes_and_validates() {
+        let config = Config::default();
+        let preview = add_ad_group_audiences(
+            &config,
+            "1234567890",
+            &ids(&["111", "111"]),
+            &ids(&["9", "9"]),
+        )
+        .expect("ok");
+        assert_eq!(operations_of(&preview).len(), 1);
+
+        let err = add_ad_group_audiences(&config, "1234567890", &[], &ids(&["9"]))
+            .expect_err("no ad groups");
+        assert!(err.to_string().contains("ad_group_ids must not be empty"));
+
+        let err = add_ad_group_audiences(&config, "1234567890", &ids(&["111"]), &[])
+            .expect_err("no lists");
+        assert!(err.to_string().contains("audience_ids must not be empty"));
+
+        let err = add_ad_group_audiences(
+            &config,
+            "1234567890",
+            &ids(&["111"]),
+            &ids(&["customers/1234567890/userLists/9"]),
+        )
+        .expect_err("resource name instead of id");
+        assert!(err.to_string().contains("numeric"));
+    }
+
+    #[test]
+    fn add_ad_group_audiences_over_limit_rejected() {
+        let config = Config::default();
+        let many: Vec<String> = (1..=251).map(|i| i.to_string()).collect();
+        let err = add_ad_group_audiences(&config, "1234567890", &many, &ids(&["1", "2"]))
+            .expect_err("over the limit");
+        assert!(err.to_string().contains("502"));
+    }
+
+    #[test]
+    fn exclude_audiences_campaign_scope_writes_negative_campaign_criteria() {
+        let config = Config::default();
+        let preview = exclude_audiences(
+            &config,
+            "123-456-7890",
+            Some("9000000002"),
+            &[],
+            &ids(&["9000002001", "9000002002"]),
+        )
+        .expect("ok");
+
+        assert_eq!(preview["operation"], "exclude_audiences");
+        assert_eq!(preview["entity_type"], "campaign_criterion");
+        assert_eq!(preview["entity_id"], "9000000002");
+        assert_eq!(preview["changes"]["negative"], true);
+
+        let ops = operations_of(&preview);
+        assert_eq!(ops.len(), 2);
+        let first = &ops[0]["campaignCriterionOperation"]["create"];
+        assert_eq!(
+            first["campaign"],
+            "customers/1234567890/campaigns/9000000002"
+        );
+        assert_eq!(first["negative"], true);
+        assert_eq!(
+            first["userList"]["userList"],
+            "customers/1234567890/userLists/9000002001"
+        );
+    }
+
+    #[test]
+    fn exclude_audiences_ad_group_scope_writes_negative_ad_group_criteria() {
+        let config = Config::default();
+        let preview = exclude_audiences(
+            &config,
+            "1234567890",
+            None,
+            &ids(&["111", "222"]),
+            &ids(&["901"]),
+        )
+        .expect("ok");
+
+        assert_eq!(preview["entity_type"], "ad_group_criterion");
+        let ops = operations_of(&preview);
+        assert_eq!(ops.len(), 2);
+        for (op, ad_group) in ops.iter().zip(["111", "222"]) {
+            let c = &op["adGroupCriterionOperation"]["create"];
+            assert_eq!(c["negative"], true);
+            assert_eq!(
+                c["adGroup"],
+                format!("customers/1234567890/adGroups/{}", ad_group)
+            );
+        }
+    }
+
+    #[test]
+    fn exclude_audiences_needs_exactly_one_scope() {
+        let config = Config::default();
+        let both = exclude_audiences(
+            &config,
+            "1234567890",
+            Some("1"),
+            &ids(&["111"]),
+            &ids(&["9"]),
+        )
+        .expect_err("both scopes");
+        assert!(both.to_string().contains("not both"));
+
+        let neither = exclude_audiences(&config, "1234567890", None, &[], &ids(&["9"]))
+            .expect_err("no scope");
+        assert!(neither.to_string().contains("campaign_id"));
+
+        // A blank campaign_id counts as absent, not as a scope.
+        let blank = exclude_audiences(&config, "1234567890", Some("  "), &[], &ids(&["9"]))
+            .expect_err("blank campaign id");
+        assert!(blank.to_string().contains("campaign_id"));
+    }
+
+    #[test]
+    fn new_audience_tools_respect_blocked_operations() {
+        let mut config = Config::default();
+        config.safety.blocked_operations = vec![
+            "add_ad_group_audiences".to_string(),
+            "exclude_audiences".to_string(),
+        ];
+        let add = add_ad_group_audiences(&config, "1234567890", &ids(&["1"]), &ids(&["2"]));
+        assert!(add.unwrap_err().to_string().contains("blocked"));
+        let exclude = exclude_audiences(&config, "1234567890", Some("1"), &[], &ids(&["2"]));
+        assert!(exclude.unwrap_err().to_string().contains("blocked"));
     }
 }

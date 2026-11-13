@@ -5,6 +5,185 @@ All notable changes to `mcp-google-ads` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Found by running every new tool with `validate_only` against a live account:
+  - `add_account_exclusions` refuses mobile app category `69500` ("All Apps"):
+    Google rejects it at account level (`INVALID_MOBILE_APP_CATEGORY`), which
+    failed the whole atomic mutate. Specific categories such as `60008` are
+    accepted there; "All Apps" stays available per campaign through
+    `exclude_placements`.
+  - `upload_display_ad` with `ad_type: IMAGE` now sends `ad.displayUrl` (the
+    final URL's host). Google requires it on image ads (`fieldError REQUIRED`);
+    HTML5 upload ads validate without it.
+
+### Added
+
+- Display remarketing could be read but not set up: the audience tools stopped
+  at a positive list on a campaign, and nothing reached the settings that decide
+  whether a remarketing campaign actually stays on its lists. Four tools close
+  that gap, each a preview confirmed through `confirm_and_apply` like the rest.
+
+  `add_ad_group_audiences` writes user lists as positive criteria on ad groups,
+  one per ad group × list. A Display ad group's audience targeting lives on the
+  ad group, so a campaign-level criterion was the wrong place for it.
+
+  `exclude_audiences` writes NEGATIVE user list criteria, either on a campaign
+  (covering every ad group in it, including later ones) or on named ad groups.
+  Exactly one scope is accepted; passing both or neither is refused, because
+  either reading of the ambiguity would be a guess about who stops seeing ads.
+
+  `set_campaign_frequency_caps` sets `campaign.frequency_caps` — impressions
+  per user per DAY, WEEK or MONTH, at the CAMPAIGN, AD_GROUP or AD_GROUP_AD
+  level. The list replaces the existing caps under one field mask, as the API
+  treats the repeated field. An empty list is refused rather than read as
+  "clear every cap", and two caps for the same level and window are refused
+  instead of left for Google to resolve.
+
+  `exclude_placements` writes NEGATIVE campaign criteria for websites, mobile
+  app categories and single mobile apps. Category `69500` is "All Apps", so one
+  criterion keeps a campaign off app inventory, where accidental taps on games
+  tend to buy clicks that never convert. Website URLs are normalized
+  (`https://www.example.com/` and `www.example.com` are one placement), and app
+  IDs must be `1-<App Store id>` or `2-<package name>`.
+
+- `update_ad_group` takes `optimized_targeting_enabled`. Optimized targeting is
+  on by default for Display ad groups and serves beyond the targeted lists; on
+  a small remarketing list that means most impressions go to people who never
+  visited the site. Setting it to `false` keeps the ad group on its lists.
+
+- `create_ad_group` takes `ad_group_type` (`SEARCH_STANDARD`, the default and
+  the only type it could write before, or `DISPLAY_STANDARD`). A Display
+  campaign rejects a Search ad group, so the tool could not add an ad group to
+  one at all.
+
+- A Display awareness campaign could not be built end to end: prospecting
+  needs audiences, placements and creatives the remarketing tools do not
+  cover. Ten tools close that gap, each a preview confirmed through
+  `confirm_and_apply`.
+
+  `create_custom_segment` creates a custom segment (the API's
+  `CustomAudience`) from keywords, URLs and Android apps, with type `AUTO`
+  (default) or `SEARCH`. `INTEREST` and `PURCHASE_INTENT` are left out: the v25
+  resource documents both as not allowed for new audiences. Custom audiences
+  are not a `googleAds:mutate` operation, so the plan carries a new dispatch,
+  `customAudiences:mutate`, with its own operation whitelist, and the applied
+  response lifts the new ID into `custom_segment_ids`.
+  `add_ad_group_custom_segments` and `add_ad_group_user_interests` (affinity
+  and in-market) add them to ad groups the way `add_ad_group_audiences` adds
+  user lists.
+
+  `add_ad_group_placements` targets websites on an ad group, or excludes
+  websites and single apps from that ad group only. `add_account_exclusions`
+  writes `CustomerNegativeCriterion` entries — websites, app categories, apps
+  and content labels — after reading what the account already excludes: a
+  duplicate would fail the whole atomic mutate, so existing ones are skipped,
+  and a request with nothing new answers `NO_CHANGES` instead of a plan.
+  Content labels are checked against the v25 enum; excluding all five digital
+  content labels is refused (Display stops serving), and labels Google lists
+  as removed (`PARKED_DOMAIN`, 10 February 2026) or YouTube-only are flagged in
+  the preview.
+
+  `set_campaign_device_modifiers` sets device bid modifiers (0 excludes the
+  device), updating the device criteria a campaign has and creating the rest,
+  and refuses excluding every device.
+
+  `upload_display_ad` turns a local file into an ad in one atomic mutate: an
+  HTML5 ZIP becomes a media bundle asset plus a `display_upload_ad`
+  (`HTML5_UPLOAD_AD`), an image becomes an image asset plus an `image_ad`,
+  linked by a temporary resource name. The file is checked before a plan
+  exists — absolute path, extension, magic bytes, Google's 600 KB / 150 KB
+  limits, and image dimensions against the standard sizes (a warning). The
+  preview shows the size and SHA-256, never the base64.
+
+  `upload_display_ads` does the same for a set of creatives: up to 10 files,
+  each one asset, and one ad per file in every named ad group, all in one
+  atomic mutate (assets first, temporary names `-1`, `-2`, …). A creative set
+  in five sizes across four ad groups is one plan instead of twenty. A file
+  can carry its own final URL, for per-size UTM tags. Every file passes the
+  single-upload checks before a plan exists, ad names must be unique, and one
+  bad file refuses the whole batch.
+
+  `enable_entities` and `pause_entities` change the status of many campaigns,
+  ad groups, ads and keywords in one atomic mutate — every status changes, or
+  none does. Going live with a Display campaign meant enabling the campaign,
+  its ad groups and a hundred uploaded ads: two hundred calls one entity at a
+  time, and a half-enabled campaign if one failed halfway. Ads and keywords
+  take their composite `adGroupId~id`; at most 500 entities per plan.
+
+  A batch tool is no way around a block: `blocked_operations` with
+  `enable_entity`, `pause_entity` or `upload_display_ad` also blocks
+  `enable_entities`, `pause_entities` or `upload_display_ads`.
+
+  `create_custom_conversion_goal` and `set_campaign_custom_conversion_goal`
+  make one campaign bid on chosen conversion actions — secondary ones too —
+  without touching the account defaults or other campaigns. A campaign
+  combines one custom goal with its standard goals, so by default
+  (`exclusive`) the tool also reads the campaign's standard goals and sets the
+  biddable ones to not biddable in the same mutate. `set_campaign_conversion_goals`
+  sets standard category × origin goals per campaign directly.
+
+- `confirm_and_apply` takes `validate_only`. The plan is sent with
+  `validateOnly: true`: Google checks every operation exactly as for a real
+  apply and writes nothing, and the plan is kept for the real apply. It is how
+  a new tool is tried against a live account. It is allowed under
+  `require_dry_run` and needs no `confirmed_twice`, because nothing changes.
+  Recommendation plans answer `NOT_VALIDATED` without sending anything: their
+  RPCs have no validate-only mode in v25, and claiming a validation that did
+  not happen would be worse than saying so.
+
+- `update_ad_group` takes `audience_targeting_mode` (`TARGETING` or
+  `OBSERVATION`): whether the ad group's audience segments narrow reach or only
+  report. It is the AUDIENCE target restriction, and Google replaces the whole
+  restriction list under that mask, so the tool reads the ad group's current
+  restrictions and changes only the AUDIENCE entry, as Google's own example
+  does.
+
+### Changed
+
+- Library callers: `create_ad_group` and `update_ad_group` gain a trailing
+  `Option` parameter (`ad_group_type`, `optimized_targeting_enabled`). Pass
+  `None` to keep the previous behaviour. The MCP tool surface is unaffected:
+  both parameters are optional.
+
+- The ID validation and order-preserving dedupe that `exclude_demographics`
+  used moved to a shared module, so the new criterion tools refuse a resource
+  name or a display name in place of a numeric ID the same way, and collapse a
+  repeated ID before it becomes a duplicate operation Google would reject the
+  whole batch for.
+
+- Library callers: `update_ad_group` gains a trailing
+  `Option<AudienceTargetingUpdate>`, and `ConfirmApplyInput` a `validate_only`
+  field (`Default` keeps it off). `confirm_and_apply_with_client` runs an apply
+  against a given client, so tests no longer need the process-wide base URL
+  override. `GoogleAdsClient::mutate_with_options` adds the validate-only flag;
+  `mutate` is unchanged.
+
+- Placement URLs over 250 characters and `adsenseformobileapps.com` are refused
+  before any request, per the criteria guide. This also applies to
+  `exclude_placements`.
+
+- `draft_keywords` documents that it also writes Display keywords: in a
+  `DISPLAY_STANDARD` ad group the same keyword criterion is contextual
+  targeting.
+
+### Fixed
+
+- `draft_campaign` with `channel_type: "DISPLAY"` sent the search-network
+  fields (`targetGoogleSearch`, `targetSearchNetwork`,
+  `targetPartnerSearchNetwork`) as `false`. They mean nothing for a Display
+  campaign, Google's own Display example sends none, and the partner-network
+  field is documented as applying only to select accounts. Only
+  `targetContentNetwork: true` is sent now.
+
+- `draft_campaign` sent a campaign without any bidding when the strategy was
+  unknown, or was `TARGET_CPA` / `TARGET_ROAS` without its target, and the
+  create then failed on the server with a generic message. Those are refused
+  up front now, as are `TARGET_IMPRESSION_SHARE` and `PERCENT_CPC` on a
+  Display campaign.
+
 ## [0.13.0] - 2026-08-24
 
 ### Added
